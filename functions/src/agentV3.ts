@@ -1,55 +1,77 @@
+/*
+* =================================================================
+* KONFIGURACJA ZMIENNEJ ŚRODOWISKOWEJ (Cloud Functions v2)
+* =================================================================
+* Ta funkcja wymaga ustawienia zmiennej środowiskowej w celu połączenia
+* z usługą Puppeteer.
+* 
+* Zmienną tę należy ustawić podczas wdrażania funkcji za pomocą flagi
+* --set-env-vars w Firebase CLI.
+* 
+* Przykład wdrożenia:
+* firebase deploy --only functions --set-env-vars PUPPETEER_URL="<URL_TWOJEJ_USLUGI_PUPPETEER>"
+* =================================================================
+*/
 import * as admin from 'firebase-admin';
 import { DocumentReference } from 'firebase-admin/firestore';
 import { vertex_ai } from './firebase-init';
 import { SchemaType, FunctionDeclaration, Part } from '@google-cloud/vertexai';
+import { v4 as uuidv4 } from 'uuid'; // Do generowania unikalnych ID sesji
+// import * as functions from 'firebase-functions'; // Usunięto, ponieważ nie jest już używane
 
-// Nowa wersja funkcji, która komunikuje się z zewnętrzną usługą Puppeteer
-async function execute_puppeteer_action(action: string, params: any): Promise<any> {
-    // WAŻNE: Wstaw tutaj prawdziwy URL swojej usługi Cloud Run!
-    const serviceUrl = 'https://puppeteer-executor-service-567539916654.europe-west1.run.app/execute';
-    // WAŻNE: Wstaw tutaj swoje tajne hasło!
-    const secret = 'TWOJE_SUPER_TAJNE_HASLO';
+// Nowa, sesyjna wersja funkcji do komunikacji z usługą Puppeteer
+async function execute_puppeteer_action(sessionId: string, action: string, params: any): Promise<any> {
+    // W Cloud Functions v2 zmienne środowiskowe odczytujemy za pomocą process.env
+    const serviceUrl = process.env.PUPPETEER_URL;
 
-    console.log(`Calling Puppeteer service for action: ${action} with params:`, params);
+    if (!serviceUrl) {
+        console.error("Brak konfiguracji usługi Puppeteer. Ustaw zmienną środowiskową PUPPETEER_URL podczas wdrażania.");
+        throw new Error("Brak konfiguracji usługi Puppeteer (PUPPETEER_URL).");
+    }
+
+    console.log(`[Sesja: ${sessionId}] Wywołanie akcji: ${action} z parametrami:`, params);
 
     try {
         const response = await fetch(serviceUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-Internal-Secret': secret,
             },
-            body: JSON.stringify({ action, params }),
+            // Przekazujemy teraz również sessionId
+            body: JSON.stringify({ sessionId, action, params }),
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Service call failed with status ${response.status}: ${errorText}`);
+            throw new Error(`Błąd usługi: status ${response.status}, treść: ${errorText}`);
         }
 
         const result = await response.json();
-        console.log("Received response from Puppeteer service:", result);
+        console.log(`[Sesja: ${sessionId}] Odpowiedź z usługi Puppeteer:`, result);
         return result;
 
     } catch (error) {
         const err = error as Error;
-        console.error(`Error calling Puppeteer service: ${err.message}`, err.stack);
-        return { success: false, error: `Failed to connect to Puppeteer service: ${err.message}` };
+        console.error(`[Sesja: ${sessionId}] Krytyczny błąd wywołania Puppeteer: ${err.message}`, err.stack);
+        return { success: false, error: `Nie udało się połączyć z usługą Puppeteer: ${err.message}` };
     }
 }
 
 // Logika orkiestratora AI (runAgent3Logic)
 export async function runAgent3Logic(data: any, taskRef: DocumentReference) {
     const { query } = data || {};
+    const sessionId = uuidv4(); // Unikalne ID dla całego zadania
 
-    await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: "Agent V3 (Puppeteer) rozpoczyna pracę..." }) });
+    await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Agent V3 (Puppeteer) rozpoczyna pracę. ID sesji: ${sessionId}` }) });
 
+    // Dodajemy nowe narzędzie do zamykania sesji przeglądarki
     const browserTools: FunctionDeclaration[] = [
         { name: "lookAtPage", description: "Analizuje aktualny widok strony i zwraca listę interaktywnych elementów. Użyj tego ZAWSZE jako pierwszy krok na nowej stronie.", parameters: { type: SchemaType.OBJECT, properties: {} } },
         { name: "goToURL", description: "Nawiguje do podanego adresu URL.", parameters: { type: SchemaType.OBJECT, properties: { url: { type: SchemaType.STRING } }, required: ["url"] } },
         { name: "typeText", description: "Wpisuje tekst w pole. Użyj selektora zwróconego przez narzędzie lookAtPage.", parameters: { type: SchemaType.OBJECT, properties: { selector: { type: SchemaType.STRING }, text: { type: SchemaType.STRING } }, required: ["selector", "text"] } },
         { name: "clickElement", description: "Klika w element. Użyj selektora zwróconego przez narzędzie lookAtPage.", parameters: { type: SchemaType.OBJECT, properties: { selector: { type: SchemaType.STRING } }, required: ["selector"] } },
         { name: "scrapeContent", description: "Pobiera pełną zawartość HTML strony do szczegółowej analizy, gdy już wiesz, że jesteś na właściwej stronie.", parameters: { type: SchemaType.OBJECT, properties: {} } },
+        { name: "closeSession", description: "Zamyka sesję przeglądarki. Użyj tej funkcji ZAWSZE po wywołaniu 'submit_final_report', aby zakończyć pracę.", parameters: { type: SchemaType.OBJECT, properties: {} } },
     ];
 
     const finalReportTool: FunctionDeclaration = {
@@ -94,23 +116,25 @@ export async function runAgent3Logic(data: any, taskRef: DocumentReference) {
     2.  **POMYŚL:** Przeanalizuj listę elementów zwróconą przez 'lookAtPage' i swój główny cel. Zdecyduj, jaki jest JEDEN, następny logiczny krok (np. kliknięcie przycisku "Szukaj" lub wpisanie tekstu w pole).
     3.  **DZIAŁAJ:** Wywołaj odpowiednie narzędzie ('clickElement' lub 'typeText') z selektorem, który otrzymałeś z narzędzia 'lookAtPage'.
     4.  Powtarzaj ten cykl, aż zrealizujesz zadanie.
-    5.  Gdy zbierzesz wszystkie potrzebne informacje, wywołaj narzędzie 'submit_final_report'.
+    5.  Gdy zbierzesz wszystkie potrzebne informacje, wywołaj narzędzie 'submit_final_report', a ZARAZ PO NIM 'closeSession'.
     
     Rozpocznij teraz. Jaki jest Twój pierwszy krok?`;
 
     try {
         let result = await chat.sendMessage(prompt);
 
-        for (let i = 0; i < 15; i++) {
+        for (let i = 0; i < 15; i++) { // Pętla bezpieczeństwa na 15 iteracji
             const functionCalls = result.response.candidates?.[0]?.content?.parts?.filter((part: Part): part is Part & { functionCall: any } => !!part.functionCall);
 
             if (!functionCalls || functionCalls.length === 0) {
+                await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: "Agent nie wywołał żadnej funkcji. Zakończenie pętli." }) });
                 break;
             }
 
             const apiResponses = [];
             for (const call of functionCalls) {
-                const { name: action, args: params } = call.functionCall;
+                // Kluczowa poprawka: Upewniamy się, że `params` jest zawsze obiektem, nawet jeśli AI nie zwróci argumentów.
+                const { name: action, args: params = {} } = call.functionCall;
 
                 if (action === "submit_final_report") {
                     await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `AI zakończyło pracę i zwróciło ostateczny raport w formacie JSON.` }) });
@@ -122,10 +146,15 @@ export async function runAgent3Logic(data: any, taskRef: DocumentReference) {
                         results: finalResults,
                         logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Zakończono. Agent V3 (Puppeteer) znalazł ${finalResults.length} firm.` }),
                     });
-                    return;
+                    // Nie kończymy jeszcze, czekamy na `closeSession`
+                } else if (action === "closeSession") {
+                    await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: "AI prosi o zamknięcie sesji przeglądarki." }) });
+                    await execute_puppeteer_action(sessionId, action, params);
+                    console.log(`Sesja ${sessionId} została zakończona na polecenie AI.`);
+                    return; // Zakończ całą funkcję
                 } else {
                     await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `AI prosi o wykonanie: ${action}` }) });
-                    const apiResponse = await execute_puppeteer_action(action, params);
+                    const apiResponse = await execute_puppeteer_action(sessionId, action, params);
                     apiResponses.push({ functionResponse: { name: action, response: apiResponse } });
                 }
             }
@@ -137,16 +166,19 @@ export async function runAgent3Logic(data: any, taskRef: DocumentReference) {
 
         const finalText = result.response.candidates?.[0]?.content?.parts?.[0]?.text || "Agent zakończył pracę bez wywołania narzędzia raportującego.";
         await taskRef.update({
-            status: "completed",
+            status: "completed_without_report",
             completedAt: admin.firestore.FieldValue.serverTimestamp(),
-            results: [],
             summary: finalText,
             logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: "Zakończono. AI nie zwróciło sformatowanej listy." }),
         });
 
     } catch (error) {
         const err = error as Error;
-        console.error("Błąd w runAgent3Logic:", err);
+        console.error(`Błąd w runAgent3Logic (sesja ${sessionId}):`, err);
         await taskRef.update({ status: "failed", error: err.message });
+    } finally {
+        // Zawsze upewnij się, że sesja jest zamykana, nawet w przypadku błędu
+        console.log(`Czyszczenie sesji ${sessionId} po zakończeniu pracy agenta.`);
+        await execute_puppeteer_action(sessionId, "closeSession", {});
     }
 }

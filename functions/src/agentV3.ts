@@ -1,16 +1,15 @@
 /*
 * =================================================================
-* KONFIGURACJA ZMIENNEJ ŚRODOWISKOWEJ
+* KONFIGURACJA ZMIENNEJ ŚRODOWISKOWEJ (Cloud Functions v2)
 * =================================================================
-* Ta funkcja wymaga ustawienia zmiennej środowiskowej w Firebase
-* w celu bezpiecznego połączenia z usługą Puppeteer.
+* Ta funkcja wymaga ustawienia zmiennej środowiskowej w celu połączenia
+* z usługą Puppeteer.
 *
-* Użyj Firebase CLI, aby ustawić tę zmienną:
+* Zmienną tę należy ustawić podczas wdrażania funkcji za pomocą flagi
+* --set-env-vars w Firebase CLI.
 *
-* firebase functions:config:set puppeteer.url="<URL_TWOJEJ_USLUGI_PUPPETEER>"
-*
-* Po ustawieniu zmiennej, wdróż funkcje ponownie:
-* firebase deploy --only functions
+* Przykład wdrożenia:
+* firebase deploy --only functions --set-env-vars PUPPETEER_URL="<URL_TWOJEJ_USLUGI_PUPPETEER>"
 * =================================================================
 */
 import * as admin from 'firebase-admin';
@@ -22,12 +21,12 @@ import * as functions from 'firebase-functions';
 
 // Nowa, sesyjna wersja funkcji do komunikacji z usługą Puppeteer
 async function execute_puppeteer_action(sessionId: string, action: string, params: any): Promise<any> {
-    // URL usługi jest wczytywany ze zmiennych środowiskowych
-    const serviceUrl = functions.config().puppeteer?.url;
+    // W Cloud Functions v2 zmienne środowiskowe odczytujemy za pomocą process.env
+    const serviceUrl = process.env.PUPPETEER_URL;
 
     if (!serviceUrl) {
-        console.error("Brak konfiguracji usługi Puppeteer. Ustaw zmienną środowiskową: puppeteer.url");
-        throw new Error("Brak konfiguracji usługi Puppeteer.");
+        console.error("Brak konfiguracji usługi Puppeteer. Ustaw zmienną środowiskową PUPPETEER_URL podczas wdrażania.");
+        throw new Error("Brak konfiguracji usługi Puppeteer (PUPPETEER_URL).");
     }
 
     console.log(`[Sesja: ${sessionId}] Wywołanie akcji: ${action} z parametrami:`, params);

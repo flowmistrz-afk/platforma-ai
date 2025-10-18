@@ -15,15 +15,25 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
-const agentV3_1 = require("./agentV3");
+// import { runAgent3Logic } from "./agentV3"; // Usunięto, ponieważ nie jest już używane
 const firebase_init_1 = require("./firebase-init");
 const admin = __importStar(require("firebase-admin"));
 // Ten skrypt służy do testowania logiki agenta v3.
@@ -47,11 +57,9 @@ async function testAgent() {
     console.log(`Zadanie utworzone z ID: ${taskRef.id}`);
     console.log("Uruchamianie logiki agenta... Skrypt zakończy działanie.");
     console.log("Możesz monitorować zadanie w konsoli Firebase lub za pomocą logów.");
-    // Czekamy na zakończenie całej logiki agenta, aby zobaczyć pełne wykonanie w teście.
-    await (0, agentV3_1.runAgent3Logic)(testQuery, taskRef);
-    // Czekamy chwilę, aby upewnić się, że operacje asynchroniczne zostały zainicjowane
-    // zanim skrypt zakończy działanie.
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // Usunięto bezpośrednie wywołanie runAgent3Logic.
+    // Skrypt teraz tylko tworzy zadanie i kończy pracę.
+    // Prawdziwa funkcja w chmurze podejmie to zadanie.
 }
 testAgent().then(async () => {
     console.log("Skrypt testowy zakończył pracę.");

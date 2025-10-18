@@ -1,21 +1,26 @@
 // ścieżka: src/pages/Agent1ResultsPage.tsx
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { doc, onSnapshot, DocumentSnapshot, FirestoreError } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import { db, auth } from '../services/firebase';
 import { Card, Spinner, Alert, ListGroup, Button, Table, Row, Col } from 'react-bootstrap';
 
+import { useAuth } from '../hooks/useAuth';
+
 // Definicja typu dla dokumentu zadania
 interface AgentTask {
-  status: 'processing' | 'completed' | 'failed';
+  status: 'processing' | 'completed' | 'failed' | 'extract_skipped' | 'search_completed';
   logs: { timestamp: { toDate: () => Date }, message: string }[];
   results: any[];
   query: any; // Dodajemy pole query do typu
+  ownerUid?: string; // Dodajemy pole ownerUid
   error?: string;
   summary?: string;
 }
 
 const Agent1ResultsPage = () => {
+
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
   const [task, setTask] = useState<AgentTask | null>(null);
@@ -45,21 +50,22 @@ const Agent1ResultsPage = () => {
       }
       const token = await user.getIdToken();
 
-      // Tworzymy nowe, bardziej szczegółowe zapytanie dla Agenta V3
-      const newQuery = `Znajdź szczegółowe informacje o firmach świadczących usługi '${task.query.specialization}' w mieście ${task.query.city}, korzystając z portali takich jak Oferteo, Oferia, Fixly.`;
-
-      const response = await fetch("https://europe-west1-automatyzacja-pesamu.cloudfunctions.net/agent3_searchWithSelenium", {
+      const response = await fetch("https://europe-west1-automatyzacja-pesamu.cloudfunctions.net/agentV4_orchestrator", {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ query: newQuery }),
+        body: JSON.stringify({
+          słowa_kluczowe: task.query.specialization,
+          lokalizacja: task.query.city,
+          query: task.query.specialization
+        }),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Błąd serwera przy uruchamianiu Agenta V3");
+        throw new Error(errorData.error || "Błąd serwera przy uruchamianiu Agenta V4");
       }
 
       const result = await response.json();
@@ -72,7 +78,7 @@ const Agent1ResultsPage = () => {
       }
 
     } catch (err: any) {
-      console.error("Błąd podczas uruchamiania Agenta V3:", err);
+      console.error("Błąd podczas uruchamiania Agenta V4:", err);
       alert(`Błąd: ${err.message}`);
     } finally {
       setIsSearchingMore(false);
@@ -85,24 +91,50 @@ const Agent1ResultsPage = () => {
       return;
     }
 
-    const taskRef = doc(db, "agent_tasks", taskId);
+    // Użyj onAuthStateChanged, aby poczekać na gotowość stanu uwierzytelnienia
+    const authUnsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // Użytkownik jest zalogowany, TERAZ można bezpiecznie nasłuchiwać na Firestore
+        console.log(`[AUTH] Użytkownik ${user.uid} jest zalogowany. Uruchamiam nasłuch dla zadania ${taskId}.`);
+        
+        // Wybór odpowiedniej kolekcji na podstawie ID zadania lub innego kryterium
+        // Możesz dodać logikę rozróżniającą zadania v1 i v4, jeśli są w różnych kolekcjach
+        const collectionName = "agent_tasks_v4"; // Załóżmy, że nowe zadania są tutaj
+        const taskRef = doc(db, collectionName, taskId);
 
-    const unsubscribe = onSnapshot(taskRef, (docSnap: DocumentSnapshot) => {
-      if (docSnap.exists()) {
-        setTask(docSnap.data() as AgentTask);
-        setError(null);
+        const firestoreUnsubscribe = onSnapshot(taskRef, (docSnap) => {
+          if (docSnap.exists()) {
+            setTask(docSnap.data() as AgentTask);
+            setError(null);
+          } else {
+            // Można dodać obsługę nasłuchu na starą kolekcję jako fallback
+            console.warn(`Nie znaleziono zadania w kolekcji ${collectionName}.`);
+            // setTask(null);
+          }
+        }, (err) => {
+          console.error("Błąd nasłuchu zadania:", err);
+          setError("Błąd połączenia z bazą danych lub brak uprawnień.");
+        });
+
+        // Zwróć funkcję czyszczącą dla listenera Firestore
+        return () => {
+          console.log(`[CLEANUP] Zatrzymuję nasłuch Firestore dla zadania ${taskId}.`);
+          firestoreUnsubscribe();
+        };
       } else {
-        setTask(null);
+        // Użytkownik nie jest zalogowany
+        console.error("[AUTH] Użytkownik wylogowany. Nie można nasłuchiwać na zadanie.");
+        setError("Użytkownik nie jest zalogowany. Odśwież stronę.");
       }
-    }, (err: FirestoreError) => {
-      console.error("Błąd nasłuchu zadania:", err);
-      setError("Błąd połączenia z bazą danych.");
     });
 
+    // Funkcja czyszcząca dla listenera autoryzacji
     return () => {
-      unsubscribe();
+      console.log("[CLEANUP] Zatrzymuję nasłuch stanu autoryzacji.");
+      authUnsubscribe();
     };
-  }, [taskId]);
+
+  }, [taskId]); // Zależność od taskId pozostaje
   
   if (error) {
     return <Alert variant="danger">{error}</Alert>;

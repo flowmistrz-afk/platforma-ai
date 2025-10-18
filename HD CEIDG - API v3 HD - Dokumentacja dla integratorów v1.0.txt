@@ -1,0 +1,1860 @@
+DOKUMENTACJA DLA INTEGRATORÓW
+(API V3)
+HURTOWNI DANYCH CEIDG
+I BIZNES.GOV.PL
+
+Biznes.gov.pl
+
+Dokumentacja dla
+integratorów API v3
+Hurtowni danych CEIDG i Biznes.gov.pl
+
+SPIS TREŚCI
+1
+
+Historia wersji (zmian) dokumentu....................................................................................................................................... 2
+
+2
+
+Wstęp .................................................................................................................................................................................. 2
+
+3
+
+Szczegółowy opis interfejsów integracyjnych API v3 ........................................................................................................... 3
+Interfejs Metoda FIRMY / Zwraca listę firm w oparciu o przekazane kryteria wyszukiwania ........................................... 3
+
+o
+▪
+
+Adres URL .................................................................................................................................................................. 3
+
+▪
+
+SPECYFIKACJA ......................................................................................................................................................... 3
+
+3.1.1
+
+Przykład użycia ...................................................................................................................................................... 5
+
+Interfejs METODA FIRMA / Zwraca szczegółowe dane firmy .................................................................................................. 7
+▪
+
+ADRES URL ............................................................................................................................................................... 7
+
+3.1.2
+
+SPECYFIKACJA .................................................................................................................................................... 7
+
+3.1.3
+
+Przykład użycia .................................................................................................................................................... 10
+
+Interfejs METODA RAPORTY / Zwraca listę raportów .................................................................................................. 13
+
+o
+▪
+
+ADRES URL ............................................................................................................................................................. 13
+
+3.1.4
+
+SPECYFIKACJA .................................................................................................................................................. 13
+
+3.1.5
+
+Przykład użycia .................................................................................................................................................... 14
+
+o
+
+Interfejs METODA RAPORT / Zwraca WYBRANY raport ............................................................................................. 15
+▪
+
+ADRES URL ............................................................................................................................................................. 15
+
+3.1.6
+
+SPECYFIKACJA .................................................................................................................................................. 15
+
+3.1.7
+
+Przykład użycia .................................................................................................................................................... 16
+
+Interfejs Metoda ZMIANA / Zwraca listę identyfikatorów firm w oparciu o przekazane kryteria wyszukiwania .............. 16
+
+o
+▪
+
+Adres URL ................................................................................................................................................................ 16
+
+▪
+
+SPECYFIKACJA ....................................................................................................................................................... 17
+
+3.1.8
+
+Przykład użycia .................................................................................................................................................... 18
+
+1
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+
+1 HISTORIA WERSJI (ZMIAN) DOKUMENTU
+Wersja
+
+Data
+
+Opis
+
+Autor
+
+Aktualizacja dokumentu
+
+Centrum Informatyki „ZETO" S.A.
+
+Uwagi
+
+opracowania
+1.0
+
+21.10.2024
+
+2 WSTĘP
+Niniejsze opracowanie stanowi podstawową dokumentację dla osób i podmiotów integrujących systemy
+z publicznymi usługami informacyjnymi dotyczącymi podmiotów gospodarczych, udostępnianymi i
+zarządzanymi przez Ministerstwo Rozwoju i Technologii. W dokumencie zostały przedstawione
+przykłady z wykorzystaniem narzędzia CURL ale można również wykorzystać inne narzędzia
+programistyczne. API v3 zostało zaimplementowane w oparciu o technologię Microsoft .NET
+Core/OpenAPI, TLS v1.2. Dane użytkowników korzystających z API Hurtowni danych CEIDG i
+Biznes.gov.pl są gromadzone i przechowywane przez okres 36 miesięcy w celu monitorowania,
+zapewnienia bezpieczeństwa i poprawy jakości usług.
+
+2
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+
+3 SZCZEGÓŁOWY OPIS INTERFEJSÓW INTEGRACYJNYCH API
+V3
+Uwaga! W URL-ach kwerend do API wielkość liter ma znaczenie dla nazw parametrów (np. nip) oraz wartości parametrów.
+W specyfikacjach metod API oraz w przykładach w niniejszym dokumencie zastosowana jest poprawna notacja małymi
+literami.
+Interfejs API posiada wbudowane dwa limit ilości zapytań działające równocześnie:
+- ograniczenie do 50 żądań w okresie 3 minut ,
+- ograniczenie do 1000 żądań w okresie 60 minut.
+Aby uzyskać odpowiedź z Hurtowni danych CEIDG i Biznes.gov.pl nie można przekroczyć żadnego z tych ograniczeń.
+W przypadku ograniczenia 50 żądań w okresie 3 minut (180s) jeżeli w tym czasie zostanie przekroczone 50 żądań to
+następuję 180 s przerwa liczona od ostatniego żądania. W celu zapewnienia bezprzerwowego dostępu do API należy
+utrzymać stały czas pomiędzy zapytaniami, który nie przekroczy ustalonej restrykcji. Optymalny czas pomiędzy zapytaniami
+to
+
+3,6
+
+s.
+
+W związku z tym, że przerwa 180 s liczona jest od ostatniego żądania, to do jej zakończenia nie należy wysyłać żądań do
+API ponieważ w wyniku takich działań może dojść do wystąpienia ciągłego braku dostępu do usługi.
+
+O INTERFEJS METODA FIRMY / ZWRACA LISTĘ FIRM W OPARCIU O
+PRZEKAZANE KRYTERIA WYSZUKIWANIA
+
+▪
+
+ADRES URL
+
+TEST: https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy
+PRODUKCJA: https://dane.biznes.gov.pl/api/ceidg/v3/firmy
+
+▪
+
+SPECYFIKACJA
+
+Parametry zapytania
+
+Parametr
+
+Wartość
+
+url sufiks
+
+/firmy?query
+
+metoda
+
+GET
+
+3
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+TOKEN JWT w nagłówku Authorization
+
+autoryzacja
+
+Argumenty zapytania (HTTP Query)
+Parametr
+
+Opis
+
+Przykład
+
+nip[]
+
+Numer NIP – lista parametrów
+
+nip=1112223344&nip=8213446907
+
+regon[]
+
+Numer REGON – lista parametrów
+
+regon=1234567890123&regon=733949640
+
+nip_sc[]
+
+Numer NIP spółki cywilnej – lista parametrów
+
+nip_sc=1112223344&nip_sc=8213446907
+
+regon_sc[]
+
+Numer REGON spółki cywilnej – lista parametrów
+
+regon_sc=1234567890123&regon_sc=733949640
+
+imie[]
+
+Imię przedsiębiorcy – lista parametrów
+
+imie=jan&imie=adam
+
+nazwisko[]
+
+Nazwisko przedsiębiorcy – lista parametrów
+
+nazwisko=Kowalski&nazwisko=Nowak
+
+nazwa[]
+
+Nazwa firmy– lista parametrów
+
+nazwa=abc&nazwa=efg
+
+ulica[]
+
+Adres firmy, ulica – lista parametrów
+
+ulica=ogrodowa&ulica=ogrodowa1
+
+budynek[]
+
+Adres firmy, budynek – lista parametrów
+
+budynek=34&budynek=35
+
+lokal[]
+
+Adres firmy, local – lista parametrów
+
+lokal=12&lokal=13
+
+miasto[]
+
+Adres firmy, miasto – lista parametrów
+
+miasto=Warszawa&miasto=białystok
+
+wojewodztwo[]
+
+Adres firmy, wojewodztwo – lista parametrów
+
+wojewodztwo=mazowieckie& wojewodztwo=podlaskie
+
+powiat[]
+
+Adres firmy, powiat – lista parametrów
+
+powiat=Warszawa&powiat=białystok
+
+gmina[]
+
+Adres firmy, gmina – lista parametrów
+
+gmina=Warszawa&gmina=Białystok
+
+kod[]
+
+Adres firmy, kod pocztowy – lista parametrów
+
+kod=01-234&kod=15-222
+
+pkd[]
+
+Kod PKD – lista parametrów – lista parametrów
+
+pkd=9312Z&pkd=9311Z
+
+page
+
+Numer strony wyszukiwania
+
+page=1
+
+limit
+
+Maksymalna liczba zwracanych elementów
+
+limit=50
+
+dataod
+
+Data rozpoczęcia działalności - zakres dolny
+
+dataod=2020-01-01
+
+datado
+
+Data rozpoczęcia działalności - zakres górny
+
+datado=2020-02-01
+
+status[]
+
+Status działalności – lista parametrów
+
+Dopuszczalne wartości
+AKTYWNY,WYKRESLONY,ZAWIESZONY,OCZEKUJE_N
+A_ROZPOCZECIE_DZIALANOSCI,WYLACZNIE_W_FOR
+MIE_SPOLKI
+
+Odpowiedź CEIDG
+Nazwa pola
+
+Opis
+
+firmy.adresDzialalnosci.budynek
+
+Adres, budynek
+
+firmy.adresDzialalnosci.gmina
+
+Adres, gmina
+
+firmy.adresDzialalnosci.kod
+
+Adres, kod pocztowy
+
+firmy.adresDzialalnosci.lokal
+
+Adres, lokal
+
+firmy.adresDzialalnosci.miasto
+
+Adres, miasto
+
+firmy.adresDzialalnosci.powiat
+
+Adres, powiat
+
+firmy.adresDzialalnosci.ulica
+
+Adres, ulica
+
+firmy.adresDzialalnosci.wojewodztwo
+
+Adres, wojewodztwo
+
+firmy.adresDzialalnosci.skrytkaPocztowa
+
+Adres, skrytka pocztowa
+
+firmy.adresDzialalnosci.opisNietypowegoMiejsca
+
+Adres, opis nietypowego miejsca
+
+firmy.adresDzialalnosci.adresat
+
+Adres, adresat
+
+firmy.adresDzialalnosci.terc
+
+Adres, kod TERC
+
+firmy.adresDzialalnosci.simc
+
+Adres, kod SIMC
+
+4
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+firmy.adresDzialalnosci.ulic
+
+Adres, kod ULIC
+
+firmy.id
+
+Identyfikator rekordu
+
+firmy.nazwa
+
+Pełna nazwa firmy przedisiębiorcy
+
+firmy.link
+
+Bezpośredni link do danych szczegółowych rekordu
+
+firmy.status
+
+Status działalności
+
+firmy.dataRozpoczecia
+
+Data rozpoczęcia działalności
+
+firmy.wlasciciel.imie
+
+Imię
+
+firmy.wlasciciel.nazwisko
+
+Nazwisko
+
+firmy.wlasciciel.nip
+
+Identyfikator NIP
+
+firmy.wlasciciel.regon
+
+Identyfikator REGON
+
+links.next
+
+Bezpośredni link do kolejnej strony wyszukania
+
+links.next
+
+Bezpośredni link do kolejnej strony
+
+inks.prev
+
+Bezpośredn link do poprzedniej strony
+
+lnks.self
+
+Bezpośredn link do obecnej strony
+
+links.first
+
+Bezpośredn link do pierwszej strony
+
+links.last
+
+Bezpośredn link do ostatniej strony
+
+count
+
+Ilość wpisów spełniających kryteria wyszukiwania
+
+Kody odpowiedzi
+Kod odpowiedzi
+
+Zdarzenie
+
+200
+
+OK
+
+204
+
+Nie znaleziono danych w odpowiedzi na podane kryteria wyszukiwania
+
+400
+
+Niepoprawnie skonstruowane zapytanie
+
+401
+
+Brak autoryzacji
+
+403
+
+Brak uprawnień do zasobu
+
+404
+
+Zasób nie istnieje
+
+429
+
+Zbyt wiele zapytań
+
+500
+
+Wewnętrzny błąd serwera
+
+3.1.1 PRZYKŁAD UŻYCIA
+Zapytanie
+curl -X GET "https://test-dane.biznes.gov.pl/api/ceidg/v3/firmy?nip=3563457932" -H "Authorization: Bearer {JWT-TOKEN}"
+Odpowiedź
+{
+"firmy": [
+{
+"id": "9D2531B1-6DED-4538-95EA-22FF2C7D2E20",
+"nazwa": "Adam IntegracjaMGMF",
+5
+
+Biznes.gov.pl
+
+Dokumentacja dla
+integratorów API v3
+Hurtowni danych CEIDG i Biznes.gov.pl
+
+"adresDzialalnosci": {
+"ulica": "ul. Zwierzyniecka",
+"budynek": "1",
+"miasto": "Białystok",
+"wojewodztwo": "PODLASKIE",
+"powiat": "Białystok",
+"gmina": "Białystok",
+"kraj": "PL",
+"kod": "15-333",
+"terc": "2061011",
+"simc": "0922410",
+"ulic": "26305"
+},
+"wlasciciel": {
+"imie": "Adam",
+"nazwisko": "IntegracjaMGMF",
+"nip": "3563457932",
+"regon": "618155359"
+},
+"dataRozpoczecia": "2014-07-29",
+"status": "WYKRESLONY",
+"link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/9D2531B1-6DED-4538-95EA-22FF2C7D2E20"
+},
+{
+"id": "6976CDA9-521A-44BE-9216-8EB1B459A68F",
+"nazwa": "Adam IntegracjaMGMF",
+"adresDzialalnosci": {
+"ulica": "ul. Zwierzyniecka",
+"budynek": "1",
+"miasto": "Białystok",
+"wojewodztwo": "PODLASKIE",
+"powiat": "Białystok",
+"gmina": "Białystok",
+"kraj": "PL",
+"kod": "15-333",
+"terc": "2061011",
+"simc": "0922410",
+"ulic": "26305"
+},
+"wlasciciel": {
+"imie": "Adam",
+"nazwisko": "IntegracjaMGMF",
+"nip": "3563457932",
+"regon": "198096992"
+},
+"dataRozpoczecia": "2014-07-29",
+"status": "WYKRESLONY",
+"link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/6976CDA9-521A-44BE-9216-8EB1B459A68F"
+}
+],
+"count": 2,
+"links": {
+"next":
+"https://testdane.biznes.gov.pl/api/ceidg/v3/firmy?nip=3563457932&status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZON
+Y&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=25&pag
+e=0",
+6
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+"prev":
+"https://testdane.biznes.gov.pl/api/ceidg/v3/firmy?nip=3563457932&status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZON
+Y&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=25&pag
+e=0",
+"self":
+"https://testdane.biznes.gov.pl/api/ceidg/v3/firmy?nip=3563457932&status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZON
+Y&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=25&pag
+e=0",
+"first":
+"https://testdane.biznes.gov.pl/api/ceidg/v3/firmy?nip=3563457932&status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZON
+Y&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=25&pag
+e=0",
+"last":
+"https://testdane.biznes.gov.pl/api/ceidg/v3/firmy?nip=3563457932&status=AKTYWNY&status=WYKRESLONY&status=ZAWIESZON
+Y&status=OCZEKUJE_NA_ROZPOCZECIE_DZIALANOSCI&status=WYLACZNIE_W_FORMIE_SPOLKI&limit=25&pag
+e=0"
+},
+"properties": {
+"dc:title": "firmy",
+"dc:description": "Zwraca listę firm",
+"dc:language": "pl-PL",
+"schema:provider": "Ministerstwo Rozwoju i Technologii",
+"schema:datePublished": "2022-01-31 11:03:53"
+}
+}
+
+INTERFEJS METODA FIRMA / ZWRACA SZCZEGÓŁOWE DANE FIRMY
+▪
+
+ADRES URL
+
+TEST: https://test-dane.biznes.gov.pl/api/ceidg/v3/firma
+PRODUKCJA: https://dane.biznes.gov.pl/api/ceidg/v3/firma
+
+3.1.2 SPECYFIKACJA
+Parametry zapytania
+Parametr
+
+Wartość
+
+url sufiks
+
+/firma?query
+/firma/{id}
+
+metoda
+
+GET
+
+autoryzacja
+
+TOKEN JWT w nagłówku Authorization
+
+Argumenty zapytania (HTTP Query)
+Argument
+
+Opis
+
+Przykład
+
+7
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+
+nip
+
+Identyfikator NIP
+
+nip=1112223344
+
+regon
+
+Identyfikator REGON
+
+regon=1234567890123
+
+ids[]
+
+Identyfikator wpisu – lista parametrów
+
+ids=cfbea1cb-b1d9-4ffa-8031-6614cf8ab600&ids=9ca701dc-2db0-43cb-a29662065ab47a38
+
+Argument
+
+Opis
+
+Przykład
+
+id
+
+Identyfikator firmy
+
+firma/31F87519-9395-4FCF-8E19-6D5C0522FA7A
+
+Odpowiedź CEIDG
+Nazwa pola
+
+Opis
+
+firma.nazwa
+
+Pełna nazwa firmy przedisiębiorcy
+
+firma.id
+
+Identyfikator rekordu
+
+firma.wlasciciel.imie
+
+Imię
+
+firma.wlasciciel.nazwisko
+
+Nazwisko
+
+firma.właściciel.nip
+
+Identyfikator NIP
+
+firma.właściciel.nipUchylony
+
+Uchylenie NIP
+
+firma.właściciel.nipUniewazniony
+
+Unieważnienie NIP
+
+firma.właściciel.regon
+
+Identyfikator REGON
+
+firma.adresDzialalnosci.budynek
+
+Adres, budynek
+
+firma.adresDzialalnosci.gmina
+
+Adres, gmina
+
+firma.adresDzialalnosci.kod
+
+Adres, kod pocztowy
+
+firma.adresDzialalnosci.lokal
+
+Adres, lokal
+
+firma.adresDzialalnosci.miasto
+
+Adres, miasto
+
+firma.adresDzialalnosci.powiat
+
+Adres, powiat
+
+firma.adresDzialalnosci.ulica
+
+Adres, ulica
+
+firma.adresDzialalnosci.wojewodztwo
+
+Adres, wojewodztwo
+
+firma.adresDzialalnosci.kraj
+
+Adres, kod kraju
+
+firma.adresDzialalnosci.skrytkaPocztowa
+
+Adres, skrytka pocztowa
+
+firma.adresDzialalnosci.opisNietypowegoMiejsca
+
+Adres, opis nietypowego miejsca
+
+firma.adresDzialalnosci.adresat
+
+Adres, adresat
+
+firma.adresDzialalnosci.terc
+
+Adres, kod TERC
+
+firma.adresDzialalnosci.simc
+
+Adres, kod SIMC
+
+firma.adresDzialalnosci.ulic
+
+Adres, kod ULIC
+
+firma.obywatelswto.kraj
+
+Nazwa kraju
+
+firma.obywatelstwo.symbol
+
+Symbol
+
+firma.dataRozpoczecia
+
+Data rozpoczęcia działalności
+
+firma.dataZawieszenia
+
+Data zawieszenia działalności
+
+firma.dataZakonczenia
+
+Data zakonczenia działalności
+
+firma.dataWykreslenia
+
+Data wykreślenia z rejestru
+
+firma.dataWznowienia
+
+Data wznowienia dzialanosci
+
+firma.status
+
+Status działalności
+
+firma.numerStatusu
+
+Identyfikator statusu działalności
+
+firma.telefon
+
+Numer telefonu
+
+firma.email
+
+Adres email
+
+firma.www
+
+Adres www
+
+firma.adresDoreczenElektronicznych
+
+Adres do doręczeń elektronicznych
+
+8
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+firma.innaFormaKonaktu
+
+Inna forma kontaktu
+
+firma.wspolnoscMajatkowa
+
+Małżeńska wspólność majątkowa (0 – Nie, 1 – Tak, 2 – Nie dotyczy)
+
+firma.wspolnoscMajatkowaDataUstania
+
+Data ustania małżeńskiej wspólności majątkowej
+
+firma.dataZgonu
+
+Data zgonu przedsiębiorcy
+
+firma.zarzadSukcesyjnyDataUstanowienia
+
+Data ustanowienia zarządu sukcesyjnego
+
+firma.zarzadSukcesyjnyDataWygasniecia
+
+Data wygaśnięcia zarządu sukcesyjnego
+
+firma.podstawyPrawneWykreslenia[]
+
+Lista podstaw prawnych wykreślenia
+
+firma.adresKorespondencyjny
+
+Adres korespondencyjny (struktura tożsama z adres działalnosći
+
+firma.rokPkd
+
+Rok PKD
+
+firma.pkd.nazwa
+
+Nazwa kodu PKD
+
+firma.pkd.symbol
+
+Symbol kodu PKD
+
+firma.pkdGlowny.nazwa
+
+Nazwa głównego kodu PKD
+
+firma.pkdGlowny.symbol
+
+Symbol głównego kodu PKD
+
+firma.spolka.nip
+
+Nip spółki cywilnej
+
+firma.spolka.regon
+
+Regon spółki cywilnej
+
+firma.spolka.zawieszenia
+
+Data zawieszenia spółki cywilnej
+
+firma.adresyDzialanosciDodatkowe
+
+Dodatkowe adresy działalności, Struktura tożsama z adresDzialalnosci
+
+firma.zakazy.typ
+
+Typ zakazu
+
+firma.zakazy.opis
+
+Opis zakazu
+
+firma.zakazy.okres
+
+Okres na jaki został orzeczony zakaz
+
+firma.zakazy.dataWydania
+
+Data wydania orzeczenia
+
+firma.zakazy.dataUprawomocnienia
+
+Data uprawomocnienia orzeczenia
+
+firma.upadlosc.rodzajInformacji
+
+Rodzaj informacji
+
+firma.upadlosc.dataOrzeczenia
+
+Data orzeczenia/wszczęcia postępowania naprawczego
+
+firma.upadlosc.imie
+
+Imię syndyka
+
+firma.upadlosc.nazwisko
+
+Nazwisko syndyka
+
+firma.upadlosc.nip
+
+NIP syndyka
+
+firma.zarzadcaSukcesyjny.dataUstanowienia
+
+Data ustanowienia zarządcy
+
+firma.zarzadcaSukcesyjny.imie
+
+Imię zarządcy
+
+firma.zarzadcaSukcesyjny.nazwisko
+
+Naziwsko zarządcy
+
+firma.zarzadcaSukcesyjny.nip
+
+Numer NIP
+
+firma.zarzadcaSukcesyjny.obywatelstwa.symbol
+
+Symbol
+
+firma.zarzadcaSukcesyjny.obywatelstwa.kraj
+
+Nazwa kraju
+
+firma.zarzadcaSukcesyjny adresKorespondencyjny
+
+Adres korespondencyjny (struktura tożsama z adres działalności)
+
+firma.zarzadcaSukcesyjny.email
+
+Adres poczty elektronicznej
+
+firma.zarzadcaSukcesyjny.www
+
+Adres strony internetowej
+
+firma.zarzadcaSukcesyjny.telefon
+
+Numer telefonu
+
+firma.zarzadcaSukcesyjny.adresDoreczenElektroniczn
+
+Adres do doręczeń elektronicznych
+
+ych
+firma.zarzadcaSukcesyjny.innaFormaKontaktu
+
+Inna forma kontaktu
+
+firma.kwalifikacjeZawodowe.dataEgzaminu
+
+Data egzaminu
+
+firma.kwalifikacjeZawodowe.dataUniewaznienia
+
+Data unieważnienia
+
+firma.kwalifikacjeZawodowe.rodzajKwalifikacji
+
+Rodzaj kwalifikacji zawodowych
+
+firma.kwalifikacjeZawodowe.zawod
+
+Zawód
+
+firma.kwalifikacjeZawodowe.wydanyPrzez
+
+Dyplom wydany przez
+
+firma.kwalifikacjeZawodowe.symbolZawodu
+
+Symbol cyfrowy zawodu
+
+firma.kwalifikacjeZawodowe.wprowadzonyPrzez
+
+Wprowadzone przez
+
+firma.uprawnienia.dataOd
+
+Data od
+
+firma.uprawnienia.dataDo
+
+Data do
+
+firma.uprawnienia.nazwa
+
+Nazwa
+
+9
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+firma.uprawnienia.opis
+
+Opis
+
+firma.uprawnienia.wprowadzonePrzez
+
+Wprowadzone przez
+
+firma.ograniczenia.dataOd
+
+Data od
+
+firma.ograniczenia.dataDo
+
+Data do
+
+firma.ograniczenia.nazwa
+
+Nazwa
+
+firma.ograniczenia.opis
+
+Opis
+
+firma.ograniczenia.wprowadzonePrzez
+
+Wprowadzone przez
+
+firma.ograniczeniaZdolnosciPrawnej.ustanowienieKur
+
+Ustanowienie kuratora z dniem
+
+atora
+firma.ograniczeniaZdolnosciPrawnej.trybRestrykcji
+
+Tryb restrykcji
+
+firma.ograniczeniaZdolnosciPrawnej.dataRestrykcji
+
+Data restrykcji
+
+firma.ograniczeniaZdolnosciPrawnej.wprowadzonePrz
+
+Organ wprowadzający
+
+ez
+firma.ograniczeniaZdolnosciPrawnej.imie
+
+Imię kuratora
+
+firma.ograniczeniaZdolnosciPrawnej.nazwisko
+
+Nazwisko kuratora
+
+firma.ograniczeniaZdolnosciPrawnej.nip
+
+Numer NIP kuratora
+
+firma.link
+
+Szczegółowy adres rekordu
+
+Kody odpowiedzi
+Kod odpowiedzi
+
+Zdarzenie
+
+200
+
+OK
+
+204
+
+Nie znaleziono danych w odpowiedzi na podane kryteria wyszukiwania
+
+400
+
+Niepoprawnie skonstruowane zapytanie
+
+401
+
+Brak autoryzacji
+
+403
+
+Brak uprawnień do zasobu
+
+404
+
+Zasób nie istnieje
+
+429
+
+Zbyt wiele zapytań
+
+500
+
+Wewnętrzny błąd serwera
+
+3.1.3 PRZYKŁAD UŻYCIA
+Zapytanie
+curl -X GET "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma?nip=2367852376" -H "Authorization: Bearer {JWT-TOKEN}"
+curl -X GET "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/31F87519-9395-4FCF-8E19-6D5C0522FA7A" -H
+"Authorization: Bearer {JWT-TOKEN}"
+
+Odpowiedź
+
+{
+"firma": [
+{
+10
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+"id": "31F87519-9395-4FCF-8E19-6D5C0522FA7A",
+"nazwa": "Adam IntegracjaMGMF - Zmiana",
+"adresDzialalnosci": {
+"ulica": "ul. Zwierzyniecka",
+"budynek": "1",
+"miasto": "Białystok",
+"wojewodztwo": "PODLASKIE",
+"powiat": "Białystok",
+"gmina": "Białystok",
+"kraj": "PL",
+"kod": "15-333",
+"terc": "2061011",
+"simc": "0922410",
+"ulic": "26305"
+},
+"adresKorespondencyjny": {
+"ulica": "ul. Zwierzyniecka",
+"budynek": "1",
+"miasto": "Białystok",
+"wojewodztwo": "PODLASKIE",
+"powiat": "Białystok",
+"gmina": "Białystok",
+"kraj": "PL",
+"kod": "15-333",
+"terc": "2061011",
+"simc": "0922410",
+"ulic": "26305"
+},
+"wlasciciel": {
+"imie": "Adam",
+"nazwisko": "IntegracjaMGMF - Zmiana",
+"nip": "2367852376",
+"regon": "29883786011481"
+},
+"obywatelstwa": [
+{
+"symbol": "PL",
+"kraj": "Polska"
+11
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+}
+],
+"rokPkd": "2007",
+"pkd": [
+{
+"kod": "3030Z",
+"nazwa": "Nazwa kodu PKD 3030Z"
+},
+{
+"kod": "3030Z",
+"nazwa": "Nazwa kodu PKD 3030Z"
+},
+{
+"kod": "3030Z",
+"nazwa": "Nazwa kodu PKD 3030Z"
+},
+{
+"kod": "3030Z",
+"nazwa": "Nazwa kodu PKD 3030Z"
+}
+],
+"pkdGlowny":
+
+{
+
+"kod": "3030Z",
+"nazwa": "Nazwa kodu PKD 3030Z”
+}
+,
+"spolki": [
+{
+"nip": "8567773578",
+"regon": "113110043"
+}
+],
+"dataRozpoczecia": "2014-07-28",
+"status": "WYLACZNIE_W_FORMIE_SPOLKI",
+"numerStatusu": 9,
+"wspolnoscMajatkowa": 0,
+"link": "https://test-dane.biznes.gov.pl/api/ceidg/v3/firma/31F87519-9395-4FCF-8E19-6D5C0522FA7A"
+}
+12
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+],
+"properties": {
+"dc:title": "firma",
+"dc:description": "Zwraca szczegółowe dane firmy",
+"dc:language": "pl-PL",
+"schema:provider": "Ministerstwo Rozwoju i Technologii",
+"schema:datePublished": "2022-02-01 09:37:08"
+}
+}
+
+O INTERFEJS METODA RAPORTY / ZWRACA LISTĘ RAPORTÓW
+▪
+
+ADRES URL
+
+TEST: https://test-dane.biznes.gov.pl/api/ceidg/v3/raporty
+PRODUKCJA: https://dane.biznes.gov.pl/api/ceidg/v3/raporty
+
+3.1.4 SPECYFIKACJA
+Parametry zapytania
+Parametr
+
+Wartość
+
+url sufiks
+
+/raporty?query
+
+metoda
+
+GET
+
+autoryzacja
+
+TOKEN JWT w nagłówku Authorization
+
+Argumenty zapytania (HTTP Query)
+Argument
+
+Opis
+
+Przykład
+
+dataod
+
+Data początkowa zakresu
+
+dataod=2020-01-01
+
+datado
+
+Data końcowa zakresu
+
+datado=2020-01-31
+
+Odpowiedź
+Nazwa pola
+
+Opis
+
+raporty.nazwa
+
+Nazwa raportu
+
+raporty.id
+
+Identyfikator raportu
+
+raporty.raport
+
+Bezpośredni link do metody Raporty / Pobranie pliku raportu
+
+raporty.dataUtworzenia
+
+Data utworzenia raportu
+
+raporty.format
+
+Format raportu
+
+13
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+
+Kody odpowiedzi
+Kod odpowiedzi
+
+Zdarzenie
+
+200
+
+OK
+
+204
+
+Nie znaleziono danych w odpowiedzi na podane kryteria wyszukiwania
+
+400
+
+Niepoprawnie skonstruowane zapytanie
+
+401
+
+Brak autoryzacji
+
+403
+
+Brak uprawnień do zasobu
+
+404
+
+Zasób nie istnieje
+
+429
+
+Zbyt wiele zapytań
+
+500
+
+Wewnętrzny błąd serwera
+
+3.1.5 PRZYKŁAD UŻYCIA
+Zapytanie
+curl -X GET "https://test-dane.biznes.gov.pl/api/ceidg/v3/raporty" -H "Authorization: Bearer {JWT-TOKEN}"
+Odpowiedź
+{
+"raporty": [
+{
+"id":
+
+"CfDJ8PLxGKJmLrdBliOdQ1byllC2UQgd5Yho4K1T-E3yJmMAeWmVXD_PwgmQEYTeYi7kAqz1Xg-
+
+GZsHqX7u-h_4msk2sHPmOnckp6JgXtwVE_JU9keBlC2qI9C2rn2ktjI8zPr6_4AkGoDXViTmXN8cxmR3W9Yz7VjLkP7zHw7swz5M",
+"nazwa": "Złożone wnioski - województwo zachodniopomorskie",
+"format": ".csv",
+"raport":
+
+"https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/CfDJ8PLxGKJmLrdBliOdQ1byllC2UQgd5Yho4K1T-
+
+E3yJmMAeWmVXD_PwgmQEYTeYi7kAqz1Xg-GZsHqX7uh_4msk2sHPmOnckp6JgXtwVE_JU9keBlC2qI9C2rn2ktjI8zPr6_4AkGoDXViTmXN8cxmR-3W9Yz7VjLkP7zHw7swz5M",
+"data-utworzenia": "2022-01-31 03:00:09"
+},
+{
+"id":
+
+"CfDJ8PLxGKJmLrdBliOdQ1byllB-
+
+2PARBotQKpaV5Wgkldv3txE3Frul196zfDhYG9aOynEFQc3211gWulHouGcjDddKMTwPAmYy9UcbSZNY89M4B1oQ624VlnxR19L_lapAPKYum1O3Mya_HI9TBTI1133q3TVDJwKapj2GHQa36ja",
+"nazwa": "Zarejestrowane działalności - województwo dolnośląskie",
+"format": ".csv",
+
+14
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+"raport":
+
+"https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/CfDJ8PLxGKJmLrdBliOdQ1byllB-
+
+2PARBotQKpaV5Wgkldv3txE3Frul196zfDhYG9aOynEFQc3211gWulHouGcjDddKMTwPAmYy9UcbSZNY89M4B1oQ624VlnxR19L_lapAPKYum1O3Mya_HI9TBTI1133q3TVDJwKapj2GHQa36ja",
+"data-utworzenia": "2022-01-26 03:00:02"
+}
+],
+"properties": {
+"dc:title": "raporty",
+"dc:description": "Metoda raporty",
+"dc:language": "pl-PL",
+"schema:provider": "Ministerstwo Rozwoju i Technologii",
+"schema:datePublished": "2022-02-01 09:51:55"
+}
+}
+
+O INTERFEJS METODA RAPORT / ZWRACA WYBRANY RAPORT
+▪
+
+ADRES URL
+
+TEST: https://test-dane.biznes.gov.pl/api/ceidg/v3/raport
+PRODUKCJA: https://dane.biznes.gov.pl/api/ceidg/v3/raport
+
+3.1.6 SPECYFIKACJA
+Parametry zapytania
+Parametr
+
+Wartość
+
+url sufiks
+
+/raport/{id}
+
+metoda
+
+GET
+
+autoryzacja
+
+TOKEN JWT w nagłówku Authorization
+
+Argumenty zapytania
+Argument
+
+Opis
+
+Przykład
+
+id
+
+Identyfikator raportu
+
+/raport/0e8d5775-9eaf-4d9d-ab34-829f706a893e
+
+Odpowiedź
+
+15
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+application/octet-stream (Zawartość raportu skompresowana ZIP)
+Kody odpowiedzi
+Kod odpowiedzi
+
+Zdarzenie
+
+200
+
+OK
+
+401
+
+Brak autoryzacji
+
+403
+
+Brak uprawnień do zasobu
+
+404
+
+Zasób nie istnieje
+
+429
+
+Zbyt wiele zapytań
+
+500
+
+Wewnętrzny błąd serwera
+
+3.1.7 PRZYKŁAD UŻYCIA
+Zapytanie
+curl -X GET "https://test-dane.biznes.gov.pl/api/ceidg/v3/raport/0e8d5775-9eaf-4d9d-ab34-829f706a893e" -H "Authorization:
+Bearer {JWT-TOKEN}"
+
+Odpowiedź
+< HTTP/2 200
+< server: nginx
+< date: Tue, 22 Sep 2020 12:21:21 GMT
+< content-type: application/octet-stream;charset=UTF-8
+< content-length: 3358990
+< x-gravitee-transaction-id: 13b654e5-a139-4a12-b654-e5a1393a1228
+< content-disposition: attachment; filename="3015c236-22ed-4e92-a6c9-2cdbb02b11d4.zip"
+
+O INTERFEJS METODA ZMIANA / ZWRACA LISTĘ IDENTYFIKATORÓW FIRM
+W OPARCIU O PRZEKAZANE KRYTERIA WYSZUKIWANIA
+
+▪
+
+ADRES URL
+
+TEST: https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana
+PRODUKCJA: https://dane.biznes.gov.pl/api/ceidg/v3/zmiana
+
+16
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+
+▪
+
+SPECYFIKACJA
+
+Parametry zapytania
+
+Parametr
+
+Wartość
+
+url sufiks
+
+/zmiana?query
+
+metoda
+
+GET
+
+autoryzacja
+
+TOKEN JWT w nagłówku Authorization
+
+Argumenty zapytania (HTTP Query)
+Parametr
+
+Opis
+
+Przykład
+
+dataod
+
+Data początkowa zakresu.
+
+dataod=2020-01-01
+
+Datę można wybrać w dwóch formatach:
+•
+
+'yyyy-MM-dd'
+
+•
+
+'yyyy-MM-dd HH:mm:ss’
+
+W przypadku wybrania formatu 'yyyy-MM-dd' data początkowa będzie
+ustawiona na datę ‘yyyy-MM-dd 00:00:00’
+datado
+
+Data końcowa zakresu.
+
+datado=2020-01-02
+
+Datę można wybrać w dwóch formatach:
+•
+
+'yyyy-MM-dd'
+
+•
+
+'yyyy-MM-dd HH:mm:ss’
+
+W przypadku wybrania formatu 'yyyy-MM-dd' data końcowa będzie
+ustawiona na datę ‘yyyy-MM-dd 23:59:59’
+page
+
+Numer strony wyszukiwania
+
+page=1
+
+limit
+
+Maksymalna liczba zwracanych elementów
+
+limit=500
+
+Rekomendujemy zakres danych do wyszukiwania nie większy niż 5 dni.
+Odpowiedź CEIDG
+Nazwa pola
+
+Opis
+
+indetyfikatoryWpisow[]
+
+Lista identyfikatorów wpisów
+
+count
+
+Ilość wpisów spełniających kryteria
+
+links.next
+
+Bezpośredni link do kolejnej strony wyszukania
+
+links.next
+
+Bezpośredni link do kolejnej strony
+
+inks.prev
+
+Bezpośredn link do poprzedniej strony
+
+lnks.self
+
+Bezpośredn link do obecnej strony
+
+links.first
+
+Bezpośredn link do pierwszej strony
+
+links.last
+
+Bezpośredn link do ostatniej strony
+
+Kody odpowiedzi
+Kod odpowiedzi
+
+Zdarzenie
+
+17
+
+Dokumentacja dla
+integratorów API v3
+
+Biznes.gov.pl
+
+Hurtowni danych CEIDG i Biznes.gov.pl
+200
+
+OK
+
+204
+
+Nie znaleziono danych w odpowiedzi na podane kryteria wyszukiwania
+
+400
+
+Niepoprawnie skonstruowane zapytanie
+
+401
+
+Brak autoryzacji
+
+403
+
+Brak uprawnień do zasobu
+
+404
+
+Zasób nie istnieje
+
+429
+
+Zbyt wiele zapytań
+
+500
+
+Wewnętrzny błąd serwera
+
+3.1.8 PRZYKŁAD UŻYCIA
+Zapytanie
+curl -X GET "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2021-09-01" -H "Authorization: Bearer {JWTTOKEN}"
+Odpowiedź
+{
+"identyfikatoryWpisow": [
+"315a69a4-369b-4b77-a30a-7dfac32fad25",
+"72e6aee1-b356-4d7e-ba70-81dfdec02d08",
+"a8d39092-1dde-4b4d-addc-46be5f7feac4",
+"d7817e7b-a8d9-46ec-ab19-e5ab80cee2ad",
+"e28a54de-edf3-42f5-a22f-58e61e90b012",
+"e3273d6c-4889-47fe-a3cd-16ea0bb362f8",
+"0cd8dea9-65b8-4171-a8db-be5cd39c668d",
+"bfdd6c90-68a2-42ab-b376-2fb65fb619ef",
+"bfff49fa-212c-4373-8e92-88353035a47b",
+"38e707dc-f651-4a3c-b10a-edff874f7b74",
+"cabac15b-3b38-4981-8f06-ca25557590f0",
+"b84cf64d-e768-4ac5-93c1-a9b7c838a35f",
+"ee92cd2b-5708-40ed-b85b-170c5b2df78d",
+"537ad972-0483-4f74-b7ea-5365d064b122",
+"88f44b0a-e944-4cb1-b63c-996c9ec67ab1",
+"536e3e8f-996e-45cf-b515-659dec52efab",
+"1c96b95e-0dad-48f6-95c6-2f4f528c5da3",
+"ce8f37a8-f9d9-4f78-a098-d4f1f9244c3c",
+"90f956b3-4b31-4c64-8345-3b5c493d78af",
+"3e33106a-fbd3-4418-8625-7c59f6a7f01a",
+"2ccc25a0-73c6-4245-89e5-a557b2ff1118",
+"a522793f-98e3-478b-b899-c907d456fabd",
+"6be3fdd8-9f41-447d-8277-47ceaa300067",
+"4148cf29-1d90-4a22-be6f-b5d309125f62",
+"52357cb9-c390-4837-8ec9-cdb38dea4b41",
+"e62be4da-cf73-4eed-824e-3e8568d65741",
+"e4a0ecc2-e187-4846-beb2-24e238b23746",
+"62bfe8d1-94d8-4511-acd3-7009f425c193",
+"89565cdf-905f-4f57-8178-0ac9867df7c2",
+18
+
+Biznes.gov.pl
+
+Dokumentacja dla
+integratorów API v3
+Hurtowni danych CEIDG i Biznes.gov.pl
+
+"d472c64b-4313-44df-ade9-7b42a118bf29",
+"fbf18071-13de-475e-9466-0bcfdebedf71",
+"6bd1265f-65c0-464d-a25e-60cd51138f3a",
+"7affb83f-de1f-4f7d-84f4-eb87ba74d42f",
+"df41ad07-c1c4-4e9b-ab6e-80d5e0d78adc",
+"984b5d3d-16ef-4f35-9442-1e6795153ac4",
+"f48b27d4-f0c6-45ba-a526-e8071bfc49ce",
+"28d7da99-c36d-471a-ab2c-e9dc617fa7cb",
+"a9971ff0-e807-4357-a312-9f2738125665",
+"99969014-f713-481f-aa17-da78e6f33193",
+"3c38c948-fccb-4a83-b016-f1ceff7eaec6",
+"8fe5917b-554b-4bf8-9e0d-7b9996f47bcb",
+"b4853b8c-89fe-4eb6-9b1f-81c5cb8740d3",
+"2faa42cb-c03b-4218-a2e1-65aa1a538dff",
+"acd0e346-c77f-475b-bcdf-8341d9e90ff5",
+"d7c95d9c-aa14-41d1-b970-d7d475ef266e",
+"045961db-7eef-4dbd-9c8a-548dcaf35b61",
+"f86cefea-498b-4e70-9ee9-683c435c9fde",
+"e2bd931f-bef4-4c62-94f6-523c2a37d0a6",
+"69d3ca9a-5374-4f8b-9213-abf3276e9ea8",
+"c08d8466-0823-4fbb-9d3a-5d60e8c8596f",
+"bd151519-c334-49a1-9572-6cfcde4685ed",
+"2f15f495-ae27-4812-aaf4-20759ece4602",
+"4e1db590-d8c0-4334-9569-eef6abcc32d5",
+"6353fcfa-e5bd-418d-9577-581849abe2fc",
+"5c44af32-b749-4179-8297-b49dc939ec40",
+"ddcd47c2-2132-42f8-bceb-d66caa041537",
+"07c361e6-0eea-4569-bcee-9ebc1e555c79",
+"c17112ab-cb7d-4858-9e5f-c00778e87460",
+"1a9def7f-f5cd-4191-a203-e93340f7ce73",
+"3c0ca451-708b-45e0-adb4-101fa52b1dd3",
+"8f2a966b-777b-437d-857b-edca5701868c",
+"a1718dce-3198-4fe3-948b-ca331aa9d979",
+"f9b536b5-89cd-4d75-b3fe-9d8a9e0f8900",
+"def321aa-621c-45ce-b795-aca96c553486",
+"b19a5206-91f1-4aa1-a5b4-699d69658f24",
+"b31de382-99ef-4282-b7dd-0500df5bd2aa",
+"a13cacb9-ac54-45d8-a15e-3fe918e988e0",
+"afe7ee79-4ec1-49c5-9e9c-0d3123c74212",
+"918f544d-2674-4e03-b509-3b7bfe0f4824",
+"bac98aa6-0a9e-4ee6-8531-440d6c1df2b0",
+"3dfe17d7-fdb6-495b-ae50-b28bb81d07c2",
+"6f48aeda-9080-4a52-807c-3c3a37c52ab1",
+"fa7165f2-a875-49b7-85c1-393105b0162e",
+"fbe06e30-65fa-47d0-8da7-fe4f9ff0a50d",
+"c149e686-95b1-49f2-aead-e948798f0aa5",
+"1820eef3-f170-4e17-8950-cbc461ee105b",
+"9dc34746-f1cd-497b-8c17-b2ac804af761",
+"2060e365-ae31-4b35-a12c-bdbb00f41a7c",
+"c256f3a7-fc4c-4e2c-aff8-f132f2d86d61",
+"788b2471-6b4d-422d-89b9-7634df237bf5",
+"f5d54628-b1d6-40ac-b5d2-8c812df38129",
+"0c0dc2bb-4712-44b7-be6b-229b04c059dd",
+"c2525fce-90ed-47d4-9e84-a1221c6b67f3",
+"a97991ac-a97b-49ff-87eb-023cb60aa422",
+"6b8f2aa6-c808-4c0a-8136-9c1ec3b97c56",
+"1343c99b-e2d9-4a09-8d98-a60d9bf5ecc7",
+19
+
+Biznes.gov.pl
+
+Dokumentacja dla
+integratorów API v3
+Hurtowni danych CEIDG i Biznes.gov.pl
+
+"3784eeb0-8961-4baf-a5e1-747c97e30b00",
+"bc1f7705-22f5-4263-8eb4-54fe1915453c",
+"d3351ecf-0fe0-4743-9fb5-a3fc09e8c31f",
+"d0b73f87-482d-4c73-8df5-971d6de86dac",
+"4ffd081e-a648-4983-858d-94973e130859",
+"bcd0bd67-2ab5-49fc-96f6-3970ba5385fe",
+"aa3e93f3-27d0-4e20-8e77-39ddf7c2f1f3",
+"1cde25f8-0456-4baa-a073-28a42a1b8917",
+"4c5c3749-8999-4c29-be89-c7ceedcfade3",
+"a62a9c46-af7b-4571-859c-634d6a5161c1",
+"eb64122a-bf1b-415d-b4b3-03796085973d",
+"8b044eb9-d6cf-4e7e-8d0b-077b1042774c",
+"102b14ab-8ff8-46a9-a8e0-239746a9ee3c",
+"c53e8009-29bf-4e08-ae58-3c7e0ca2cb22"
+],
+"count": 100,
+"links": {
+"next": "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2021-09-01&limit=100&page=0",
+"prev": "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2021-09-01&limit=100&page=0",
+"self": "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2021-09-01&limit=100&page=0",
+"first": "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2021-09-01&limit=100&page=0",
+"last": "https://test-dane.biznes.gov.pl/api/ceidg/v3/zmiana?dataod=2021-09-01&limit=100&page=0"
+},
+"properties": {
+"dc:title": "zmiana",
+"dc:description": "Zwraca listę identyfikatorów wpisów",
+"dc:language": "pl-PL",
+"schema:provider": "Ministerstwo Rozwoju i Technologii",
+"schema:datePublished": "2022-02-01 10:17:28"
+}
+}
+
+20
+
+

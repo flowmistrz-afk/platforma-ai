@@ -10,6 +10,18 @@ const AgentsListPage = () => {
       name: 'Agent 1: Wyszukiwanie Podwykonawców',
       description: 'Znajdź i przeanalizuj potencjalnych podwykonawców na podstawie specjalizacji i lokalizacji.',
       path: '/agents/run/find-subcontractors'
+    },
+    {
+      id: 'pro-agent',
+      name: 'AGENT wersja PRO',
+      description: 'Uruchamia zaawansowany, wieloetapowy proces wyszukiwania i analizy firm z użyciem uczenia maszynowego.',
+      path: '/agents/run/pro-agent'
+    },
+    {
+      id: 'agent-pro-max',
+      name: 'AgentProMax: Konstruktor Workflow',
+      description: 'Twórz i uruchamiaj własne, niestandardowe przepływy pracy agentów AI za pomocą wizualnego edytora.',
+      path: '/agent-pro-max'
     }
   ];
 

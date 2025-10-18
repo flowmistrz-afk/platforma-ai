@@ -1,0 +1,929 @@
+// =================================================================================
+// Plik: /home/flowmistrz/platforma-ai/src/pages/ProAgentResultsPage.tsx
+// =================================================================================
+
+import React, { useState, useEffect } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db, auth } from '../services/firebase';
+import { onAuthStateChanged } from 'firebase/auth';
+import { Card, Spinner, Alert, ListGroup, Table, Row, Col } from 'react-bootstrap';
+import { Task, ScrapedData } from '../types'; // Używamy naszych nowych, globalnych typów
+
+const ProAgentResultsPage = () => {
+  const { taskId } = useParams<{ taskId: string }>();
+  const [task, setTask] = useState<Task | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!taskId) {
+      setError("Nie podano ID zadania.");
+      return;
+    }
+
+    const authUnsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        console.log(`[AUTH] Użytkownik ${user.uid} jest zalogowany. Uruchamiam nasłuch dla zadania ${taskId}.`);
+        
+        const taskRef = doc(db, "tasks", taskId); // <-- NASŁUCHUJEMY NA WŁAŚCIWĄ KOLEKCJĘ
+
+        const firestoreUnsubscribe = onSnapshot(taskRef, (docSnap) => {
+          if (docSnap.exists()) {
+            setTask(docSnap.data() as Task);
+            setError(null);
+          } else {
+            setError("Nie znaleziono zadania o podanym ID w kolekcji 'tasks'.");
+          }
+        }, (err) => {
+          console.error("Błąd nasłuchu zadania:", err);
+          setError("Błąd połączenia z bazą danych lub brak uprawnień.");
+        });
+
+        return () => {
+          console.log(`[CLEANUP] Zatrzymuję nasłuch Firestore dla zadania ${taskId}.`);
+          firestoreUnsubscribe();
+        };
+      } else {
+        console.error("[AUTH] Użytkownik wylogowany. Nie można nasłuchiwać na zadanie.");
+        setError("Użytkownik nie jest zalogowany. Odśwież stronę.");
+      }
+    });
+
+    return () => {
+      console.log("[CLEANUP] Zatrzymuję nasłuch stanu autoryzacji.");
+      authUnsubscribe();
+    };
+
+  }, [taskId]);
+  
+  if (error) {
+    return <Alert variant="danger">{error}</Alert>;
+  }
+
+  if (!task) {
+    return <div className="text-center p-5"><Spinner animation="border" /> <p>Oczekuję na dane zadania...</p></div>;
+  }
+
+  const isTaskRunning = !['completed', 'failed'].includes(task.status);
+
+  return (
+    <div>
+      <Link to="/agents" className="mb-4 d-inline-block">
+        &larr; Wróć do listy agentów
+      </Link>
+      <h1>Wyniki Pracy Agenta PRO</h1>
+      <p>ID zadania: <code>{taskId}</code></p>
+      <p>Status: <strong>{task.status}</strong> {isTaskRunning && <Spinner animation="border" size="sm" />}</p>
+      
+      <Row>
+        <Col md={8}>
+          <Card className="mt-4">
+            <Card.Header as="h5">Zebrane Dane</Card.Header>
+            <Card.Body>
+              {isTaskRunning && task.results?.length === 0 && <div className="text-center p-4"><p className="mt-2">Agent pracuje, wyniki pojawią się tutaj...</p></div>}
+              {task.results && task.results.length > 0 ? (
+                <Table striped bordered hover responsive size="sm">
+                  <thead>
+                    <tr>
+                      <th>Nazwa Firmy</th>
+                      <th>Dane Kontaktowe</th>
+                      <th>Źródło</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {task.results.map((item: ScrapedData, index: number) => (
+                      <tr key={index}>
+                        <td>{item.companyName || 'Brak nazwy'}</td>
+                        <td>
+                          {item.contactDetails.phones.map(p => <div key={p}>Telefon: {p}</div>)}
+                          {item.contactDetails.emails.map(e => <div key={e}>Email: {e}</div>)}
+                          {item.contactDetails.address && <div>Adres: {item.contactDetails.address}</div>}
+                        </td>
+                        <td><a href={item.sourceUrl} target="_blank" rel="noopener noreferrer">Link</a></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </Table>
+                ) : !isTaskRunning && <Alert variant="warning">Agent nie znalazł żadnych pasujących firm.</Alert>}
+               {task.status === 'failed' && <Alert variant="danger">Praca agenta zakończona błędem.</Alert>}
+            </Card.Body>
+          </Card>
+        </Col>
+        <Col md={4}>
+          <Card className="mt-4">
+            <Card.Header as="h5">Konsola Agenta (Na Żywo)</Card.Header>
+            <ListGroup variant="flush" style={{ maxHeight: '600px', overflowY: 'auto', fontSize: '0.85rem' }}>
+              {task.logs && task.logs.slice().reverse().map((log, index) => (
+                <ListGroup.Item key={index} className="py-2 px-3 border-bottom-0">
+                  <small className="text-muted">{log.timestamp.toDate().toLocaleTimeString()}</small>
+                  <p className="mb-0"><strong>[{log.agent}]</strong> {log.message}</p>
+                </ListGroup.Item>
+              ))}
+            </ListGroup>
+          </Card>
+        </Col>
+      </Row>
+    </div>
+  );
+};
+
+export default ProAgentResultsPage;
+
+
+// =================================================================================
+// Plik: /home/flowmistrz/platforma-ai/src/pages/ProAgentPage.tsx
+// =================================================================================
+
+import React, { useState } from 'react';
+import { Card, Form, Button, Alert, Spinner } from 'react-bootstrap';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth';
+
+const ProAgentPage = () => {
+  const [initialQuery, setInitialQuery] = useState('');
+  const [city, setCity] = useState('');
+  const [province, setProvince] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  
+  const { authUser } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+
+    if (!initialQuery || !city || !province) {
+      setError('Wszystkie pola są wymagane.');
+      return;
+    }
+
+    if (!authUser) {
+      setError('Musisz być zalogowany, aby uruchomić agenta.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const idToken = await authUser.getIdToken();
+      const response = await fetch('https://europe-west1-automatyzacja-pesamu.cloudfunctions.net/createNewTask', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ initialQuery, city, province }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Wystąpił błąd serwera.');
+      }
+
+      const result = await response.json();
+      
+      if (result.success && result.taskId) {
+        // Przekieruj na stronę wyników nowego agenta (do stworzenia w przyszłości)
+        // Na razie możemy przekierować na stronę główną lub stronę agentów
+        navigate(`/pro-agent/results/${result.taskId}`);
+      } else {
+        throw new Error('Nie udało się utworzyć zadania.');
+      }
+
+    } catch (err: any) {
+      setError(err.message || 'Nie udało się uruchomić agenta.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <Card className="shadow-sm">
+        <Card.Header>
+          <Card.Title as="h3">AGENT wersja PRO</Card.Title>
+          <Card.Text className="text-muted">Uruchom zaawansowany proces wyszukiwania i analizy firm.</Card.Text>
+        </Card.Header>
+        <Card.Body className="p-4">
+          {error && <Alert variant="danger">{error}</Alert>}
+          <Form onSubmit={handleSubmit}>
+            <Form.Group className="mb-3" controlId="initialQuery">
+              <Form.Label>Szukana usługa lub specjalizacja</Form.Label>
+              <Form.Control
+                type="text"
+                placeholder="np. układanie kostki brukowej, ocieplenia"
+                value={initialQuery}
+                onChange={(e) => setInitialQuery(e.target.value)}
+                required
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-3" controlId="city">
+              <Form.Label>Miasto</Form.Label>
+              <Form.Control
+                type="text"
+                placeholder="np. Warszawa"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                required
+              />
+            </Form.Group>
+
+            <Form.Group className="mb-3" controlId="province">
+              <Form.Label>Województwo</Form.Label>
+              <Form.Control
+                type="text"
+                placeholder="np. mazowieckie"
+                value={province}
+                onChange={(e) => setProvince(e.target.value)}
+                required
+              />
+            </Form.Group>
+
+            <Button variant="primary" type="submit" disabled={loading}>
+              {loading ? <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" /> : 'Uruchom Agenta'}
+            </Button>
+          </Form>
+        </Card.Body>
+      </Card>
+    </div>
+  );
+};
+
+export default ProAgentPage;
+
+
+// =================================================================================
+// Plik: /home/flowmistrz/platforma-ai/functions/src/agents/orchestrator.ts
+// =================================================================================
+
+import { Task, ScrapedData } from "../types";
+import { db } from "../firebase-init";
+import * as admin from "firebase-admin";
+import { runEnricher } from "./enricher";
+import { runGoogleSearch } from "./searcher";
+import { runClassifier } from "./classifier";
+import { scrapeCompanyWebsites, scrapePortalWebsites } from "./scraper";
+
+/**
+ * Agreguje i czyści wyniki, usuwając duplikaty i łącząc dane kontaktowe.
+ */
+function aggregateAndCleanResults(results: ScrapedData[]): ScrapedData[] {
+  if (!results || results.length === 0) return [];
+
+  const companyMap = new Map<string, ScrapedData>();
+
+  for (const result of results) {
+    if (!result.companyName) continue;
+
+    // Normalizacja nazwy firmy dla lepszego dopasowania
+    const normalizedName = result.companyName.toLowerCase()
+      .replace(/\s+(spółka z o.o.|sp. z o.o.|s.c.|spółka cywilna|jawná|komandytowa)/g, '')
+      .replace(/[.,\- "]/g, '')
+      .trim();
+
+    const existing = companyMap.get(normalizedName);
+
+    if (existing) {
+      // Łączenie danych kontaktowych z użyciem Set do automatycznej deduplikacji
+      const mergedPhones = new Set([...existing.contactDetails.phones, ...result.contactDetails.phones]);
+      const mergedEmails = new Set([...existing.contactDetails.emails, ...result.contactDetails.emails]);
+
+      existing.contactDetails.phones = Array.from(mergedPhones);
+      existing.contactDetails.emails = Array.from(mergedEmails);
+      
+      // Prosta reguła: preferuj adres, jeśli istniejący jest pusty
+      if (!existing.contactDetails.address && result.contactDetails.address) {
+          existing.contactDetails.address = result.contactDetails.address;
+      }
+      // Łączenie opisów, jeśli są różne
+      if (result.description && existing.description !== result.description) {
+          existing.description = (existing.description || "") + " | " + result.description; 
+      }
+
+    } else {
+      // Klonowanie obiektu, aby uniknąć modyfikacji oryginału w pętli
+      companyMap.set(normalizedName, { ...result });
+    }
+  }
+
+  return Array.from(companyMap.values());
+}
+
+
+/**
+ * Główna funkcja logiki dla Agenta Mózgu (Orkiestratora).
+ */
+export async function runOrchestrator(taskId: string, taskData: Task) {
+  console.log(`[Orchestrator] Rozpoczynam pracę nad zadaniem: ${taskId}, status: ${taskData.status}`);
+
+  try {
+    switch (taskData.status) {
+      case 'pending':
+        await db.collection("tasks").doc(taskId).update({
+          status: "enriching",
+          logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: "Przekazano do Agenta Wzbogacającego." }),
+        });
+        const enrichedQuery = await runEnricher(taskData.query.initialQuery);
+        await db.collection("tasks").doc(taskId).update({
+          "query.identifiedService": enrichedQuery.identifiedService,
+          "query.expandedKeywords": enrichedQuery.keywords,
+          "query.pkdCodes": enrichedQuery.pkdCodes,
+          status: "searching",
+          logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: `Wzbogacanie zakończone. Rozpoczynam wyszukiwanie.` }),
+        });
+        break;
+
+      case 'searching':
+        await db.collection("tasks").doc(taskId).update({
+          logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: "Uruchamiam Asystenta Wyszukiwania Google..." }),
+        });
+        const searchResults = await runGoogleSearch(taskData.query);
+        await db.collection("tasks").doc(taskId).update({
+          "intermediateData.googleSearchResults": searchResults,
+          status: "classifying",
+          logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: `Wyszukiwanie Google zakończone. Znaleziono ${searchResults.length} linków.` }),
+        });
+        break;
+
+      case 'classifying':
+        if (!taskData.intermediateData?.googleSearchResults) throw new Error("Brak wyników wyszukiwania do klasyfikacji.");
+        await db.collection("tasks").doc(taskId).update({
+          logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: "Uruchamiam Agenta Klasyfikującego linki..." }),
+        });
+        const classifiedLinks = await runClassifier(taskData.intermediateData.googleSearchResults);
+        await db.collection("tasks").doc(taskId).update({
+          "intermediateData.classifiedLinks": classifiedLinks,
+          status: "scraping",
+          logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: `Klasyfikacja zakończona. Stron firmowych: ${classifiedLinks.companyUrls.length}, portali: ${classifiedLinks.portalUrls.length}.` }),
+        });
+        break;
+
+      case 'scraping':
+        const companyUrls = taskData.intermediateData?.classifiedLinks?.companyUrls || [];
+        if (companyUrls.length > 0) {
+          await db.collection("tasks").doc(taskId).update({
+            logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: `Rozpoczynam scraping ${companyUrls.length} stron firmowych...` }),
+          });
+          const companyResults = await scrapeCompanyWebsites(companyUrls);
+          for (const result of companyResults) {
+            if (result.contactDetails.emails.length > 0 || result.contactDetails.phones.length > 0) {
+              await db.collection("tasks").doc(taskId).update({ results: admin.firestore.FieldValue.arrayUnion(result) });
+            }
+          }
+        }
+        const portalUrls = taskData.intermediateData?.classifiedLinks?.portalUrls || [];
+        if (portalUrls.length > 0) {
+          await db.collection("tasks").doc(taskId).update({
+            logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: `Rozpoczynam scraping ${portalUrls.length} portali...` }),
+          });
+          const portalResults = await scrapePortalWebsites(portalUrls);
+          for (const result of portalResults) {
+            await db.collection("tasks").doc(taskId).update({ results: admin.firestore.FieldValue.arrayUnion(result) });
+          }
+        }
+        await db.collection("tasks").doc(taskId).update({
+          status: "aggregating",
+          logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: "Scraping zakończony. Przechodzę do agregacji wyników." }),
+        });
+        break;
+
+      case 'aggregating':
+        const rawResults = taskData.results || [];
+        await db.collection("tasks").doc(taskId).update({
+          logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: `Rozpoczynam agregację ${rawResults.length} surowych wyników...` }),
+        });
+        const finalResults = aggregateAndCleanResults(rawResults);
+        await db.collection("tasks").doc(taskId).update({
+          results: finalResults,
+          status: "completed",
+          logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: `Agregacja zakończona. Finalna liczba unikalnych firm: ${finalResults.length}. Zadanie zakończone.` }),
+        });
+        break;
+    }
+  } catch (error) {
+      console.error(`[Orchestrator] Błąd krytyczny w zadaniu ${taskId}:`, error);
+      await db.collection("tasks").doc(taskId).update({
+        status: "failed",
+        logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), agent: "Orchestrator", message: `Błąd krytyczny: ${(error as Error).message}` })
+      });
+  }
+}
+
+// =================================================================================
+// Plik: /home/flowmistrz/platforma-ai/functions/src/agents/classifier.ts
+// =================================================================================
+
+import { vertex_ai } from "../firebase-init";
+import { SearchResult } from "./searcher";
+
+// Definicja typu dla wyniku klasyfikacji
+export interface ClassifiedLinks {
+  companyUrls: string[];
+  portalUrls: string[];
+}
+
+/**
+ * Uruchamia Agenta Klasyfikującego Linki.
+ * @param searchResults Tablica obiektów z wynikami wyszukiwania Google.
+ * @returns Obietnica zwracająca obiekt ze sklasyfikowanymi linkami.
+ */
+export async function runClassifier(searchResults: SearchResult[]): Promise<ClassifiedLinks> {
+  if (!searchResults || searchResults.length === 0) {
+    return { companyUrls: [], portalUrls: [] };
+  }
+
+  const generativeModel = vertex_ai.getGenerativeModel({ model: "gemini-2.5-pro" });
+
+  const linksToClassify = searchResults.map(r => `{"link": "${r.link}", "title": "${r.title}", "snippet": "${r.snippet}"}`).join("\n");
+
+  const prompt = `Jesteś inteligentnym analitykiem internetowym. Twoim zadaniem jest klasyfikacja listy linków na podstawie ich adresu, tytułu i opisu. Dla każdego linku zdecyduj, czy prowadzi on bezpośrednio do strony firmowej (wizytówki konkretnej firmy), czy do portalu ogłoszeniowego, katalogu firm lub forum (np. Oferteo, OLX, Panorama Firm, Fixly, forum-budowlane.pl).
+
+**Wytyczne:**
+- **Strona firmowa**: Zazwyczaj ma w domenie nazwę firmy, w tytule również, a opis mówi o ofercie tej konkretnej firmy.
+- **Portal/Katalog**: Adres URL jest generyczny (np. oferteo.pl, panoramafirm.pl), a tytuł i opis mówią o wielu firmach, zleceniach lub zawierają frazy "znajdź fachowca", "najlepsze firmy" itp.
+
+Lista linków do sklasyfikowania (w formacie JSONL):
+${linksToClassify}
+
+Zwróć wynik **wyłącznie** w formacie JSON, bez żadnych dodatkowych wyjaśnień, komentarzy ani formatowania markdown. Struktura JSON musi być następująca:
+{
+  "companyUrls": ["link_do_strony_firmowej_1", "link_do_strony_firmowej_2"],
+  "portalUrls": ["link_do_portalu_1", "link_do_portalu_2"]
+}`;
+
+  try {
+    const result = await generativeModel.generateContent(prompt);
+    const response = result.response;
+    const responseText = response.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!responseText) {
+      throw new Error("Otrzymano pustą odpowiedź od AI przy klasyfikacji linków.");
+    }
+
+    const jsonMatch = responseText.match(/{[\]s[\s\S]*}/);
+    if (!jsonMatch || !jsonMatch[0]) {
+      console.error("Nie znaleziono obiektu JSON w odpowiedzi AI (klasyfikacja).", responseText);
+      throw new Error("Nie znaleziono obiektu JSON w odpowiedzi AI (klasyfikacja).");
+    }
+
+    const parsedResult = JSON.parse(jsonMatch[0]) as ClassifiedLinks;
+    // Prosta walidacja, czy odpowiedź zawiera oczekiwane pola
+    if (Array.isArray(parsedResult.companyUrls) && Array.isArray(parsedResult.portalUrls)) {
+      return parsedResult;
+    } else {
+      throw new Error("Odpowiedź AI nie zawiera oczekiwanych pól 'companyUrls' i 'portalUrls'.");
+    }
+
+  } catch (error) {
+    console.error("Błąd podczas klasyfikacji linków przez AI:", error);
+    // W przypadku błędu zwróć pusty obiekt, aby nie przerywać całego procesu
+    return { companyUrls: [], portalUrls: [] };
+  }
+}
+
+// =================================================================================
+// Plik: /home/flowmistrz/platforma-ai/functions/src/agents/enricher.ts
+// =================================================================================
+
+import { vertex_ai } from "../firebase-init";
+
+// Definicja typu dla wyniku, aby utrzymać spójność
+export interface EnrichedQuery {
+  identifiedService: string;
+  keywords: string[];
+  pkdCodes: string[];
+}
+
+/**
+ * Uruchamia Agenta Wzbogacającego Zapytanie.
+ * Analizuje zapytanie użytkownika, aby wyodrębnić usługę, słowa kluczowe i kody PKD.
+ * @param initialQuery Początkowe zapytanie od użytkownika.
+ * @returns Obiekt z wzbogaconymi danymi.
+ */
+export async function runEnricher(initialQuery: string): Promise<EnrichedQuery> {
+  const generativeModel = vertex_ai.getGenerativeModel({
+    model: "gemini-2.5-pro",
+  });
+
+  const prompt = `Jesteś światowej klasy ekspertem w polskiej branży budowlanej i specjalistą od marketingu internetowego. Twoim zadaniem jest przeanalizowanie zapytania użytkownika i wyizolowanie GŁÓWNEJ USŁUGI BUDOWLANEJ/RZEMIOSŁA. Następnie, na podstawie wyizolowanej usługi, kreatywnie rozbudujesz zbiór fraz kluczowych oraz zidentyfikujesz pasujące kody PKD.
+
+**WYTYCZNE KRYTYCZNE:**
+1.  **Ignoruj Lokalizację:** Wszelkie wzmianki o lokalizacji (np. miasto, województwo, "w pobliżu", "okolice") muszą być całkowicie zignorowane i nie mogą być częścią generowanych fraz kluczowych. Interesuje nas czysta usługa (np. "brukarstwo", "ocieplanie budynków").
+2.  **Profesjonalna Terminologia:** Generowane frazy muszą być profesjonalne i obejmować zarówno potoczne nazwy, jak i techniczne/biznesowe synonimy (np. dla "ocieplanie budynków" to także "termomodernizacja").
+
+Oryginalne zapytanie użytkownika: "${initialQuery}"
+
+**Zadania do wykonania:**
+1.  **Identyfikacja Usługi:** Zidentyfikuj i wyodrębnij jedną, główną usługę budowlaną lub rzemiosło z zapytania użytkownika.
+2.  **Generowanie Kluczowych Fraz:** Wygeneruj listę 8-12 unikalnych, alternatywnych i synonimicznych fraz oraz słów kluczowych, które profesjonalnie opisują zidentyfikowaną usługę. Uwzględnij formy rzeczownikowe (np. "brukarz") oraz czynności (np. "układanie kostki brukowej").
+3.  **Kody PKD:** Na podstawie zidentyfikowanej usługi i wygenerowanych fraz, zidentyfikuj 1-3 najbardziej prawdopodobne, pasujące kody PKD (Polskiej Klasyfikacji Działalności) dla firm świadczących tę usługę.
+
+Zwróć wynik wyłącznie w formacie JSON, bez żadnych dodatkowych komentarzy, formatowania markdown (bez 
+```json
+) ani wyjaśnień. Struktura JSON musi być następująca:
+{
+  "identifiedService": "Główna usługa wyodrębniona z zapytania",
+  "keywords": ["fraza_1", "fraza_2", "fraza_3", "fraza_4", "fraza_5", "fraza_6", "fraza_7", "fraza_8"],
+  "pkdCodes": ["kod_pkd_1", "kod_pkd_2", "kod_pkd_3"]
+}
+`;
+
+  try {
+    const result = await generativeModel.generateContent(prompt);
+    const response = result.response;
+    const responseText = response.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!responseText) {
+      throw new Error("Otrzymano pustą odpowiedź od AI.");
+    }
+
+    const jsonMatch = responseText.match(/{[\s\S]*}/);
+    if (!jsonMatch || !jsonMatch[0]) {
+      console.error("Could not find a JSON object in the AI response.", responseText);
+      throw new Error("Nie znaleziono obiektu JSON w odpowiedzi AI.");
+    }
+    
+    const extractedJSON = jsonMatch[0];
+
+    try {
+      const parsedResult = JSON.parse(extractedJSON) as EnrichedQuery;
+      return parsedResult;
+    } catch (e) {
+      console.error("Błąd parsowania JSON:", e, "Otrzymany tekst:", extractedJSON);
+      throw new Error("Błąd parsowania odpowiedzi JSON od AI.");
+    }
+  } catch (error) {
+    console.error("Błąd podczas komunikacji z Vertex AI:", error);
+    throw new Error("Błąd podczas generowania sugestii przez AI.");
+  }
+}
+
+// =================================================================================
+// Plik: /home/flowmistrz/platforma-ai/functions/src/agents/scraper.ts
+// =================================================================================
+
+import { vertex_ai, db } from "../firebase-init";
+import { Knowledge, ScrapedData } from "../types";
+import * as admin from "firebase-admin";
+
+const PUPPETEER_SERVICE_URL = process.env.PUPPETEER_SERVICE_URL;
+
+/**
+ * Generyczna funkcja do komunikacji z zewnętrzną usługą Puppeteer.
+ */
+async function callPuppeteer(action: string, params: any, sessionId: string): Promise<any> {
+  if (!PUPPETEER_SERVICE_URL) {
+    throw new Error("Brak adresu URL usługi Puppeteer w zmiennych środowiskowych.");
+  }
+  const response = await fetch(PUPPETEER_SERVICE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, params, sessionId }),
+  });
+  if (!response.ok) {
+    const errorBody = await response.text();
+    throw new Error(`Błąd w usłudze Puppeteer: ${response.statusText}, ${errorBody}`);
+  }
+  return response.json();
+}
+
+/**
+ * Używa AI do wyodrębnienia danych kontaktowych z podanego tekstu (HTML).
+ */
+async function extractContactDetailsWithAI(htmlContent: string): Promise<ScrapedData['contactDetails']> {
+  if (!htmlContent || htmlContent.trim().length < 50) {
+      return { phones: [], emails: [], address: "" };
+  }
+  const generativeModel = vertex_ai.getGenerativeModel({ model: "gemini-2.5-pro" });
+  const prompt = `Jesteś ekspertem w analizie stron internetowych. Twoim zadaniem jest znalezienie i wyodrębnienie danych kontaktowych z podanego kodu HTML. Skup się na numerach telefonów, adresach e-mail i adresie fizycznym firmy.
+
+**Wytyczne:**
+1.  **Telefony**: Szukaj numerów stacjonarnych i komórkowych. Znormalizuj je.
+2.  **E-maile**: Znajdź wszystkie adresy e-mail.
+3.  **Adres**: Znajdź pełny adres firmy (ulica, kod pocztowy, miasto).
+
+Przeanalizuj poniższy kod HTML:
+
+
+${htmlContent.substring(0, 40000)}
+
+
+Zwróć wynik **wyłącznie** w formacie JSON o strukturze:
+
+
+{
+  "phones": ["numer_1"],
+  "emails": ["email_1"],
+  "address": "pełny adres firmy"
+}
+
+
+`;
+  try {
+    const result = await generativeModel.generateContent(prompt);
+    const responseText = result.response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const jsonMatch = responseText.match(/{[\s\S]*}/);
+    if (!jsonMatch?.[0]) throw new Error("Nie znaleziono JSON w odpowiedzi AI.");
+    return JSON.parse(jsonMatch[0]);
+  } catch (error) {
+    console.error("Błąd ekstrakcji danych kontaktowych przez AI:", error);
+    return { phones: [], emails: [], address: "" };
+  }
+}
+
+/**
+ * Orkiestruje proces scrapowania dla pojedynczej strony firmowej.
+ */
+async function scrapeSingleCompanyPage(url: string): Promise<ScrapedData> {
+  const sessionId = `scrape-${Date.now()}`;
+  let htmlContent = '';
+  try {
+    await callPuppeteer("goToURL", { url }, sessionId);
+    const pageContent = await callPuppeteer("scrapeContent", {}, sessionId);
+    htmlContent = pageContent.content || '';
+  } finally {
+    await callPuppeteer("closeSession", {}, sessionId).catch(err => console.error(`Nie udało się zamknąć sesji ${sessionId}:`, err));
+  }
+  const contactDetails = await extractContactDetailsWithAI(htmlContent);
+  return { sourceUrl: url, sourceType: 'company_website', contactDetails };
+}
+
+/**
+ * Główna funkcja uruchamiająca proces scrapowania dla wszystkich stron firmowych.
+ */
+export async function scrapeCompanyWebsites(urls: string[]): Promise<ScrapedData[]> {
+    const results: ScrapedData[] = [];
+    for (const url of urls) {
+        try {
+            console.log(`Scrapuję stronę firmową: ${url}`);
+            const result = await scrapeSingleCompanyPage(url);
+            results.push(result);
+        } catch (error) {
+            console.error(`Nie udało się w pełni przetworzyć URL: ${url}`, error);
+        }
+    }
+    return results;
+}
+
+// --- NOWA LOGIKA DLA SCRAPERA PORTALI ---
+/**
+ * Używa AI do wyodrębnienia danych z HTML na podstawie znanego selektora.
+ */
+async function extractDataWithKnownSelectorAI(htmlContent: string, selectors: Knowledge['selectors'] | undefined): Promise<Partial<ScrapedData>> {
+  const companyNameSelector = selectors?.companyNameOnProfile;
+  if (!companyNameSelector) return {};
+
+  const generativeModel = vertex_ai.getGenerativeModel({ model: "gemini-2.5-pro" });
+  const prompt = `Jesteś precyzyjnym robotem do ekstrakcji danych. Z podanego kodu HTML, znajdź element pasujący do selektora CSS: "${companyNameSelector}". Zwróć jego zawartość tekstową.
+
+HTML do analizy:
+
+
+${htmlContent.substring(0, 40000)}
+
+
+Zwróć wynik **wyłącznie** w formacie JSON o strukturze:
+
+
+{
+  "companyName": "Znaleziona nazwa firmy"
+}
+
+
+`;
+  try {
+    const result = await generativeModel.generateContent(prompt);
+    const responseText = result.response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const jsonMatch = responseText.match(/{[\s\S]*}/);
+    if (!jsonMatch?.[0]) throw new Error("Nie znaleziono JSON w odpowiedzi AI (znana strategia).");
+    return JSON.parse(jsonMatch[0]);
+  } catch (error) {
+    console.error(`Błąd ekstrakcji danych ze znanym selektorem przez AI:`, error);
+    return {};
+  }
+}
+
+/**
+ * Scrapuje stronę portalu, używając istniejącej strategii z bazy wiedzy.
+ */
+async function scrapeWithKnownStrategy(url: string, selectors: Knowledge['selectors'] | undefined): Promise<ScrapedData | null> {
+  console.log(`[Scraper] Używam istniejącej strategii dla ${url}`);
+  const sessionId = `known-${Date.now()}`;
+  let htmlContent = '';
+
+  try {
+    await callPuppeteer("goToURL", { url }, sessionId);
+    const pageContent = await callPuppeteer("scrapeContent", { selector: selectors?.companyNameOnProfile }, sessionId);
+    htmlContent = pageContent.content || '';
+  } finally {
+    await callPuppeteer("closeSession", {}, sessionId).catch(err => console.error(`Nie udało się zamknąć sesji ${sessionId}:`, err));
+  }
+
+  if (htmlContent.length < 100) return null;
+
+  const extractedData = await extractDataWithKnownSelectorAI(htmlContent, selectors);
+
+  if (!extractedData.companyName) {
+    console.log(`Nie udało się wyodrębnić danych przy użyciu znanej strategii dla ${url}`);
+    return null;
+  }
+
+  return {
+    companyName: extractedData.companyName,
+    sourceUrl: url,
+    sourceType: 'portal_oferteo',
+    contactDetails: { phones: [], emails: [], address: "" }
+  };
+}
+
+/**
+ * Analizuje stronę w trybie nauki, aby wyodrębnić dane i selektory, a następnie zapisuje je w bazie wiedzy.
+ */
+async function learnAndScrapePage(url: string, domain: string): Promise<ScrapedData | null> {
+  console.log(`[Scraper] Uruchamiam tryb nauki dla domeny: ${domain}`);
+  const sessionId = `learn-${Date.now()}`;
+  let htmlContent = '';
+
+  try {
+    await callPuppeteer("goToURL", { url }, sessionId);
+    const pageContent = await callPuppeteer("scrapeContent", {}, sessionId);
+    htmlContent = pageContent.content || '';
+  } finally {
+    await callPuppeteer("closeSession", {}, sessionId).catch(err => console.error(`Nie udało się zamknąć sesji ${sessionId}:`, err));
+  }
+
+  if (htmlContent.length < 100) return null;
+
+  const generativeModel = vertex_ai.getGenerativeModel({ model: "gemini-2.5-pro" });
+  const prompt = `Jesteś ekspertem od web scrapingu. Przeanalizuj poniższy kod HTML strony z portalu ogłoszeniowego. Twoim zadaniem jest:
+1. Znaleźć nazwę firmy wykonującej zlecenie.
+2. Zidentyfikować stabilny i unikalny selektor CSS, który prowadzi do tej nazwy firmy.
+3. Wyodrębnić dane kontaktowe (telefony, e-maile) jeśli są bezpośrednio widoczne.
+
+HTML do analizy:
+
+
+${htmlContent.substring(0, 40000)}
+
+
+Zwróć wynik **wyłącznie** w formacie JSON o strukturze:
+
+
+{
+  "extractedData": {
+    "companyName": "Znaleziona nazwa firmy",
+    "phones": [],
+    "emails": []
+  },
+  "learnedSelectors": {
+    "companyNameOnProfile": "#identyfikator .klasa-nazwy-firmy"
+  }
+}
+
+
+`;
+  try {
+    const result = await generativeModel.generateContent(prompt);
+    const responseText = result.response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const jsonMatch = responseText.match(/{[\s\S]*}/);
+    if (!jsonMatch?.[0]) throw new Error("Nie znaleziono JSON w odpowiedzi AI (tryb nauki).");
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    const extractedData = parsed.extractedData;
+    const learnedSelectors = parsed.learnedSelectors;
+
+    if (!extractedData?.companyName || !learnedSelectors?.companyNameOnProfile) {
+      throw new Error("Odpowiedź AI w trybie nauki jest niekompletna.");
+    }
+
+    // Zapisz nową wiedzę w Firestore
+    const knowledgeEntry: Partial<Knowledge> = { // Zmieniono na Partial<Knowledge> dla elastyczności
+      domain,
+      description: `Automatycznie wygenerowana strategia dla ${domain}`,
+      strategy: "Użyj selektora companyNameOnProfile do znalezienia nazwy firmy.",
+      selectors: learnedSelectors,
+      lastUpdated: admin.firestore.FieldValue.serverTimestamp(), // Usunięto niepoprawną asercję typu
+      version: 1,
+    };
+    await db.collection('knowledge_base').doc(domain).set(knowledgeEntry);
+    console.log(`[Scraper] Zapisano nową wiedzę dla domeny: ${domain}`);
+
+    return {
+      companyName: extractedData.companyName,
+      sourceUrl: url,
+      sourceType: 'portal_oferteo',
+      contactDetails: {
+        phones: extractedData.phones || [],
+        emails: extractedData.emails || [],
+        address: ''
+      }
+    };
+
+  } catch (error) {
+    console.error(`Błąd w trybie nauki dla ${domain}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Główna funkcja uruchamiająca proces scrapowania dla portali ogłoszeniowych.
+ */
+export async function scrapePortalWebsites(urls: string[]): Promise<ScrapedData[]> {
+  const results: ScrapedData[] = [];
+  for (const url of urls) {
+    try {
+      const domain = new URL(url).hostname.replace(/^www\./, '');
+      const knowledgeDoc = await db.collection('knowledge_base').doc(domain).get();
+
+      let result: ScrapedData | null = null;
+      if (knowledgeDoc.exists) {
+        result = await scrapeWithKnownStrategy(url, knowledgeDoc.data()?.selectors);
+      } else {
+        result = await learnAndScrapePage(url, domain);
+      }
+
+      if (result) results.push(result);
+
+    } catch (error) {
+      console.error(`Nie udało się przetworzyć URL portalu: ${url}`, error);
+    }
+  }
+  return results;
+} // <- Usunięto zbędny przecinek
+
+// =================================================================================
+// Plik: /home/flowmistrz/platforma-ai/functions/src/agents/searcher.ts
+// =================================================================================
+
+import { Task } from "../types";
+
+// Definicja typu dla pojedynczego wyniku wyszukiwania
+export interface SearchResult {
+  link: string;
+  title: string;
+  snippet: string;
+}
+
+/**
+ * Uruchamia Asystenta Wyszukującego Google.
+ * Wykonuje wyszukiwania dla każdego słowa kluczowego i zwraca unikalną listę wyników.
+ * @param query Obiekt zapytania z zadania, zawierający wzbogacone słowa kluczowe i lokalizację.
+ * @returns Obietnica zwracająca tablicę wyników wyszukiwania.
+ */
+export async function runGoogleSearch(query: Task['query']): Promise<SearchResult[]> {
+  const apiKey = process.env.SEARCH_API_KEY;
+  const searchEngineId = process.env.SEARCH_ENGINE_CX;
+
+  if (!apiKey || !searchEngineId) {
+    throw new Error("Brak klucza API lub ID wyszukiwarki w zmiennych środowiskowych.");
+  }
+
+  if (!query.expandedKeywords || query.expandedKeywords.length === 0) {
+    console.log("Brak rozszerzonych słów kluczowych, pomijam wyszukiwanie.");
+    return [];
+  }
+
+  const allResults: SearchResult[] = [];
+  const searchLocation = query.location?.city || '';
+
+  // Pętla przez wszystkie wzbogacone słowa kluczowe
+  for (const keyword of query.expandedKeywords) {
+    const searchQuery = `${keyword} ${searchLocation}`.trim();
+    const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${searchEngineId}&q=${encodeURIComponent(searchQuery)}`;
+
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        console.error(`Błąd zapytania do Google Search API dla "${searchQuery}": ${response.statusText}`);
+        continue; // Przejdź do następnego słowa kluczowego w przypadku błędu
+      }
+
+      const data = await response.json();
+      if (data.items) {
+        const results: SearchResult[] = data.items.map((item: any) => ({
+          link: item.link,
+          title: item.title,
+          snippet: item.snippet,
+        }));
+        allResults.push(...results);
+      }
+    } catch (error) {
+      console.error(`Błąd krytyczny podczas wyszukiwania dla "${searchQuery}":`, error);
+      // Kontynuuj, nawet jeśli jedno zapytanie się nie powiedzie
+    }
+  }
+
+  // Usuwanie duplikatów na podstawie linku
+  const uniqueResults = Array.from(new Map(allResults.map(item => [item.link, item])).values());
+
+  console.log(`Znaleziono ${uniqueResults.length} unikalnych wyników wyszukiwania.`);
+  return uniqueResults;
+}
+
+// TODO: Implementacja Asystenta Google Maps
+// export async function runGoogleMapsSearch(...) { ... }
+
+// TODO: Implementacja Asystenta CEIDG/KRS
+// export async function runCeidgSearch(...) { ... }

@@ -13,7 +13,7 @@ const Step4_Sources = () => {
 
   const handleRunAgent = async () => {
     setIsLoading(true);
-    toast.info("Uruchamiam agenta...");
+    toast.info("Uruchamiam agenta V4...");
 
     if (!authUser) {
       toast.error("Błąd: Użytkownik niezalogowany!");
@@ -23,13 +23,17 @@ const Step4_Sources = () => {
 
     try {
       const token = await authUser.getIdToken();
-      const functionUrl = 'https://europe-west1-automatyzacja-pesamu.cloudfunctions.net/runAgent1_findSubcontractors';
+      // ZMIANA: Użycie nowego endpointu V4
+      const functionUrl = 'https://europe-west1-automatyzacja-pesamu.cloudfunctions.net/agentV4_orchestrator';
 
-      const { formData, suggestions } = useAgentStore.getState();
+      const { formData } = useAgentStore.getState();
 
+      // ZMIANA: Dostosowanie payloadu do oczekiwań agenta V4
       const payload = {
-        ...formData,
-        identifiedService: suggestions?.identifiedService,
+        query: formData.specialization, // Główny termin wyszukiwania
+        słowa_kluczowe: formData.specialization, // Alias dla kompatybilności
+        lokalizacja: formData.city,
+        sources: formData.sources
       };
 
       const response = await fetch(functionUrl, {

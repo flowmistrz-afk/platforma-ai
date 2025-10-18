@@ -1,0 +1,4 @@
+google-cloud-aiplatform[agent_engines,adk]>=1.112.0
+a2a-sdk>=0.3.4
+fastapi
+uvicorn

@@ -1,0 +1,46 @@
+.dndflow {
+  display: flex;
+  flex-direction: row;
+  height: 100vh;
+}
+
+.dndflow aside {
+  width: 20%;
+  border-right: 1px solid #eee;
+  padding: 15px;
+  font-size: 12px;
+  background: #fcfcfc;
+}
+
+.dndflow aside .description {
+  margin-bottom: 10px;
+}
+
+.dndflow .reactflow-wrapper {
+  flex-grow: 1;
+  height: 100%;
+}
+
+.dndflow .selectall {
+  margin-top: 10px;
+}
+
+.dndflow .dndnode {
+  padding: 10px;
+  border-radius: 3px;
+  margin-bottom: 10px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: grab;
+}
+
+.dndflow .dndnode.input { border: 1px solid #0041d0; }
+.dndflow .dndnode.output { border: 1px solid #ff0072; }
+.dndflow .dndnode.default { border: 1px solid #1a192b; }
+
+.dndflow .dndnode.enricher { border: 1px solid #28a745; background: rgba(40, 167, 69, 0.1);}
+.dndflow .dndnode.searcher { border: 1px solid #007bff; background: rgba(0, 123, 255, 0.1); }
+.dndflow .dndnode.classifier { border: 1px solid #fd7e14; background: rgba(253, 126, 20, 0.1); }
+.dndflow .dndnode.scraper { border: 1px solid #dc3545; background: rgba(220, 53, 69, 0.1); }
+.dndflow .dndnode.ceidg-searcher { border: 1px solid #6f42c1; background: rgba(111, 66, 193, 0.1); }

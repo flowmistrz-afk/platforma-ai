@@ -6,9 +6,9 @@ import { Card, ProgressBar } from 'react-bootstrap';
 
 // Aktualizacja importów dla nowych kroków
 import Step1Specialization from '../components/agent/Step1_Specialization';
-import Step2_Refinement from '../components/agent/Step2_Refinement';
-import Step3_Location from '../components/agent/Step3_Location';
-import Step4_Sources from '../components/agent/Step4_Sources';
+import Step2Refinement from '../components/agent/Step2_Refinement';
+import Step3Location from '../components/agent/Step3_Location';
+import Step4Sources from '../components/agent/Step4_Sources';
 
 const Agent1RunPage = () => {
   const step = useAgentStore((state) => state.step);
@@ -20,11 +20,11 @@ const Agent1RunPage = () => {
       case 1:
         return <Step1Specialization />;
       case 2:
-        return <Step2_Refinement />;
+        return <Step2Refinement />;
       case 3:
-        return <Step3_Location />;
+        return <Step3Location />;
       case 4:
-        return <Step4_Sources />;
+        return <Step4Sources />;
       default:
         return <Step1Specialization />;
     }

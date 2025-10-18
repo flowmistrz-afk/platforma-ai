@@ -17,6 +17,9 @@ import LoadingSpinner from './components/LoadingSpinner';
 import AgentsListPage from './pages/AgentsListPage';
 import Agent1RunPage from './pages/Agent1RunPage';
 import Agent1ResultsPage from './pages/Agent1ResultsPage';
+import ProAgentResultsPage from './pages/ProAgentResultsPage';
+import ProAgentPage from './pages/ProAgentPage'; // <-- DODANY IMPORT
+import AgentProMaxPage from './pages/AgentProMaxPage';
 import AgentV2Runner from './components/agent/AgentV2Runner';
 
 function App() {
@@ -93,6 +96,14 @@ function App() {
               }
             />
             <Route
+              path="/agents/run/pro-agent" // <-- DODANA ŚCIEŻKA
+              element={
+                <ProtectedRoute roles={['company-admin', 'company-user']}>
+                  <ProAgentPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/agents/results/:taskId"
               element={
                 <ProtectedRoute roles={['company-admin', 'company-user']}>
@@ -101,10 +112,26 @@ function App() {
               }
             />
             <Route
+              path="/pro-agent/results/:taskId"
+              element={
+                <ProtectedRoute roles={['company-admin', 'company-user']}>
+                  <ProAgentResultsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/uruchom-agenta-v2/:taskId"
               element={
                 <ProtectedRoute roles={['company-admin', 'company-user']}>
                   <AgentV2Runner />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent-pro-max"
+              element={
+                <ProtectedRoute roles={['company-admin', 'company-user']}>
+                  <AgentProMaxPage />
                 </ProtectedRoute>
               }
             />

@@ -1,4 +1,4 @@
-import { runAgent3Logic } from "./agentV3";
+// import { runAgent3Logic } from "./agentV3"; // Usunięto, ponieważ nie jest już używane
 import { db } from "./firebase-init";
 import * as admin from "firebase-admin";
 
@@ -30,12 +30,9 @@ const testQuery = {
   console.log("Uruchamianie logiki agenta... Skrypt zakończy działanie.");
   console.log("Możesz monitorować zadanie w konsoli Firebase lub za pomocą logów.");
 
-  // Czekamy na zakończenie całej logiki agenta, aby zobaczyć pełne wykonanie w teście.
-  await runAgent3Logic(testQuery, taskRef);
-
-  // Czekamy chwilę, aby upewnić się, że operacje asynchroniczne zostały zainicjowane
-  // zanim skrypt zakończy działanie.
-  await new Promise(resolve => setTimeout(resolve, 3000));
+  // Usunięto bezpośrednie wywołanie runAgent3Logic.
+  // Skrypt teraz tylko tworzy zadanie i kończy pracę.
+  // Prawdziwa funkcja w chmurze podejmie to zadanie.
 }
 
 testAgent().then(async () => {

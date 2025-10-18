@@ -1,0 +1,1017 @@
+--- /home/flowmistrz/platforma-ai/functions/src/agentV2.ts ---
+
+import { onRequest } from "firebase-functions/v2/https";
+import { setGlobalOptions } from "firebase-functions/v2";
+import * as admin from "firebase-admin";
+import cors from "cors";
+import { SchemaType, FunctionDeclaration } from "@google-cloud/vertexai";
+import { DocumentReference } from "firebase-admin/firestore";
+import { db, vertex_ai } from "./firebase-init";
+
+setGlobalOptions({ region: "europe-west1", secrets: ["GOOGLE_MAPS_API_KEY"] });
+
+const corsHandler = cors({ origin: true });
+
+// --- REAL API TOOL IMPLEMENTATIONS (using fetch) ---
+
+async function execute_geocoding(city: string): Promise<any> {
+  console.log(`[AGENT_V2_DEBUG] Rozpoczynam execute_geocoding dla miasta: "${city}"`);
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) {
+    console.error("[AGENT_V2_DEBUG] Klucz Google Maps API nie został znaleziony!");
+    throw new Error("Google Maps API key not found.");
+  }
+
+  const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+  url.searchParams.append("address", city);
+  url.searchParams.append("key", apiKey);
+  console.log(`[AGENT_V2_DEBUG] Wywołuję Geocoding API z URL: ${url.toString()}`);
+
+  try {
+    const response = await fetch(url.toString());
+    const data = await response.json();
+    console.log("[AGENT_V2_DEBUG] Otrzymano odpowiedź z Geocoding API:", JSON.stringify(data, null, 2));
+
+    if (data.results && data.results.length > 0) {
+      const location = data.results[0].geometry.location;
+      console.log(`[AGENT_V2_DEBUG] Sukces geokodowania. Znaleziono lokalizację:`, location);
+      return { success: true, location: location };
+    }
+    console.warn("[AGENT_V2_DEBUG] Geokodowanie nie powiodło się lub nie zwróciło wyników.", data.error_message);
+    return { success: false, error: data.error_message || "Nie znaleziono współrzędnych dla podanego miasta." };
+  } catch (error) {
+    console.error("[AGENT_V2_DEBUG] Krytyczny błąd w execute_geocoding:", error);
+    return { success: false, error: "Błąd podczas wywołania Geocoding API." };
+  }
+}
+
+async function execute_places_search(query: string, location?: { lat: number, lng: number }, radiusInKm?: number): Promise<any> {
+  console.log(`[AGENT_V2_DEBUG] Rozpoczynam execute_places_search z zapytaniem: "${query}"`);
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) {
+    console.error("[AGENT_V2_DEBUG] Klucz Google Maps API nie został znaleziony w execute_places_search!");
+    throw new Error("Google Maps API key not found.");
+  }
+
+  const url = "https://places.googleapis.com/v1/places:searchText";
+  const body: any = { textQuery: query.substring(0, 250) };
+
+  if (location) {
+    const radiusInMeters = radiusInKm ? radiusInKm * 1000 : 50000.0;
+    body.locationBias = {
+      circle: {
+        center: { latitude: location.lat, longitude: location.lng },
+        radius: radiusInMeters,
+      },
+    };
+    console.log(`[AGENT_V2_DEBUG] Dodano locationBias: lat=${location.lat}, lng=${location.lng}, radius=${radiusInMeters}m`);
+  }
+
+  console.log(`[AGENT_V2_DEBUG] Wywołuję Places API z URL: ${url} i body:`, JSON.stringify(body, null, 2));
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": apiKey,
+        "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.rating,places.userRatingCount,places.websiteUri,places.internationalPhoneNumber",
+      },
+      body: JSON.stringify(body),
+    });
+
+    const data = await response.json();
+    console.log("[AGENT_V2_DEBUG] Otrzymano odpowiedź z Places API:", JSON.stringify(data, null, 2));
+
+    if (data.error) {
+        console.error("[AGENT_V2_DEBUG] Places API zwróciło błąd:", data.error);
+        return { success: false, error: data.error.message || "Unknown Places API Error" };
+    }
+    console.log(`[AGENT_V2_DEBUG] Sukces Places API. Znaleziono ${data.places?.length || 0} miejsc.`);
+    return { success: true, places: data.places || [] };
+  } catch (error) {
+    console.error("[AGENT_V2_DEBUG] Krytyczny błąd w execute_places_search:", error);
+    return { success: false, error: "Błąd podczas wywołania Places API (New)." };
+  }
+}
+
+// --- AGENT LOGIC ---
+
+export async function runAgent2Logic(data: any, taskRef: DocumentReference) {
+    console.log("[AGENT_V2_DEBUG] Uruchomiono runAgent2Logic z danymi:", data);
+    const { keywords, city, radius } = data || {};
+
+    try {
+      await taskRef.update({
+        logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: "Agent v2 (z prawdziwymi narzędziami) rozpoczyna pracę..." })
+      });
+
+      const geocodeTool: FunctionDeclaration = {
+        name: "geocode_city",
+        description: "Pobiera współrzędne geograficzne (latitude, longitude) dla nazwy miasta.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            city: { type: SchemaType.STRING, description: "Nazwa miasta, np. 'Warszawa'" },
+          },
+          required: ["city"],
+        },
+      };
+
+      const placesTool: FunctionDeclaration = {
+        name: "places_text_search",
+        description: "Wyszukuje firmy i miejsca na podstawie zapytania tekstowego. Może być zawężone do konkretnej lokalizacji i promienia.",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            query: { type: SchemaType.STRING, description: "Zapytanie, np. 'firmy budowlane' lub 'sklep hydrauliczny'" },
+            location: { type: SchemaType.OBJECT, properties: { lat: {type: SchemaType.NUMBER}, lng: {type: SchemaType.NUMBER} }, description: "Współrzędne geograficzne do zawężenia wyszukiwania." },
+            radiusInKm: { type: SchemaType.NUMBER, description: "Promień wyszukiwania w kilometrach." },
+          },
+          required: ["query"],
+        },
+      };
+
+      const tools = [{ functionDeclarations: [geocodeTool, placesTool] }];
+      console.log("[AGENT_V2_DEBUG] Zdefiniowano narzędzia:", JSON.stringify(tools, null, 2));
+
+      const generativeModelWithTools = vertex_ai.getGenerativeModel({
+        model: "gemini-2.5-pro", // Użycie wskazanego modelu
+        tools: tools,
+      });
+
+      const chat = generativeModelWithTools.startChat();
+      const prompt = `Jesteś agentem AI, Twoim zadaniem jest znalezienie firm budowlanych w Polsce.
+      Oto zapytanie użytkownika:
+      - Miasto: ${city}
+      - Promień wyszukiwania: ${radius} km
+      - Słowa kluczowe opisujące usługę: ${keywords.join(", ")}
+
+      Twoje zadanie:
+      1.  **KROK 1: Geokodowanie.** Użyj narzędzia 'geocode_city', aby znaleźć współrzędne dla miasta: ${city}.
+      2.  **KROK 2: Wyszukiwanie.** Użyj narzędzia 'places_text_search'. Jako 'query' użyj kombinacji słów kluczowych i miasta. Jako 'location' podaj współrzędne uzyskane w kroku 1. Jako 'radiusInKm' użyj promienia ${radius}.
+      3.  **KROK 3: Analiza i Raport.** Przeanalizuj wyniki. Zwróć ostateczną listę 5-10 najlepszych znalezionych firm w formacie JSON. Użyj DOKŁADNIE następującego schematu dla każdego obiektu w tablicy: {"nazwa": "string", "adres": "string", "telefon": "string | null", "website": "string | null", "ocena": "number | null", "liczba_opinii": "number | null"}. Całość opakuj w blok markdown 
+```json ... 
+```. Zwróć tylko i wyłącznie ten blok.`;
+      console.log("[AGENT_V2_DEBUG] Wygenerowano prompt dla AI:", prompt);
+
+      await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Rozpoczynam sesję z AI...` }) });
+
+      console.log("[AGENT_V2_DEBUG] Wysyłam pierwszą wiadomość do AI...");
+      let result = await chat.sendMessage(prompt);
+      console.log("[AGENT_V2_DEBUG] Otrzymano pierwszą odpowiedź od AI:", JSON.stringify(result, null, 2));
+
+      for (let i = 0; i < 5; i++) {
+        console.log(`[AGENT_V2_DEBUG] Pętla narzędzi, iteracja ${i + 1}`);
+        const functionCalls = result.response.candidates?.[0]?.content?.parts?.filter(part => part.functionCall);
+        if (!functionCalls || functionCalls.length === 0) {
+          console.log("[AGENT_V2_DEBUG] AI nie wywołało żadnego narzędzia. Przerywam pętlę.");
+          break;
+        }
+        console.log("[AGENT_V2_DEBUG] AI wywołało narzędzia:", JSON.stringify(functionCalls, null, 2));
+
+        const apiResponses = [];
+        for (const call of functionCalls) {
+            if (call.functionCall?.name === "geocode_city") {
+                const cityArg = (call.functionCall.args as any)['city'] as string;
+                await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `AI prosi o geokodowanie miasta: "${cityArg}"` }) });
+                const apiResponse = await execute_geocoding(cityArg);
+                apiResponses.push({ functionResponse: { name: "geocode_city", response: apiResponse } });
+            }
+            else if (call.functionCall?.name === "places_text_search") {
+                const queryArg = (call.functionCall.args as any)['query'] as string;
+                const locationArg = (call.functionCall.args as any)['location'];
+                const radiusArg = (call.functionCall.args as any)['radiusInKm'];
+                await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `AI prosi o wyszukanie w Places API: "${queryArg}"` }) });
+                const apiResponse = await execute_places_search(queryArg, locationArg, radiusArg);
+                apiResponses.push({ functionResponse: { name: "places_text_search", response: apiResponse } });
+            }
+        }
+        
+        console.log("[AGENT_V2_DEBUG] Wysyłam odpowiedzi z narzędzi do AI:", JSON.stringify(apiResponses, null, 2));
+        result = await chat.sendMessage(apiResponses);
+        console.log("[AGENT_V2_DEBUG] Otrzymano kolejną odpowiedź od AI:", JSON.stringify(result, null, 2));
+      }
+
+      const finalResponseText = result.response.candidates?.[0]?.content?.parts?.[0]?.text;
+      console.log("[AGENT_V2_DEBUG] Finalna odpowiedź tekstowa od AI:", finalResponseText);
+      await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `AI zakończyło pracę i zwróciło ostateczny raport.` }) });
+      
+      if (!finalResponseText) {
+          console.error("[AGENT_V2_DEBUG] AI nie zwróciło finalnej odpowiedzi tekstowej.");
+          throw new Error("AI nie zwróciło ostatecznego raportu tekstowego.");
+      }
+
+      let finalResults = [];
+      try {
+          console.log("[AGENT_V2_DEBUG] Próbuję parsować JSON z finalnej odpowiedzi...");
+          const jsonMatch = finalResponseText.match(/```json\n([\s\S]*?)\n```/);
+          let jsonString = null;
+
+          if (jsonMatch && jsonMatch[1]) {
+              jsonString = jsonMatch[1];
+          } else {
+              const rawJsonMatch = finalResponseText.match(/(\[[\s\S]*\])/);
+              if (rawJsonMatch && rawJsonMatch[0]) {
+                  jsonString = rawJsonMatch[0];
+              }
+          }
+
+          if (jsonString) {
+              console.log("[AGENT_V2_DEBUG] Znaleziono i wyodrębniono JSON:", jsonString);
+              finalResults = JSON.parse(jsonString);
+          } else {
+              console.warn("[AGENT_V2_DEBUG] Nie znaleziono bloku JSON w odpowiedzi AI.");
+              throw new Error("Nie znaleziono formatu JSON w odpowiedzi AI.");
+          }
+      } catch(e) {
+          const err = e as Error;
+          console.error("[AGENT_V2_DEBUG] Krytyczny błąd parsowania JSON:", err);
+          await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Błąd parsowania JSON z odpowiedzi AI: ${err.message}` }) });
+          throw e;
+      }
+
+      await taskRef.update({
+        status: "completed",
+        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        results: finalResults,
+        logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Zakończono. Agent v2 (real) znalazł ${finalResults.length} pasujących podwykonawców.` }),
+      });
+
+    } catch (error) {
+      const err = error as Error;
+      console.error("[AGENT_V2_DEBUG] Krytyczny błąd w runAgent2Logic:", err, err.stack);
+      await taskRef.update({ status: "failed", error: err.message });
+    }
+}
+
+export const agent2_searchWithTools = onRequest({ secrets: ["GOOGLE_MAPS_API_KEY"] }, async (request, response) => {
+  corsHandler(request, response, async () => {
+    const idToken = request.headers.authorization?.split("Bearer ")[1];
+    if (!idToken) {
+      response.status(401).send("Unauthorized");
+      return;
+    }
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (error) {
+      response.status(401).send("Unauthorized");
+      return;
+    }
+
+    const uid = decodedToken.uid;
+    const data = request.body;
+    const { keywords, city } = data || {};
+
+    if (!keywords || !city) {
+      response.status(400).json({ error: "Pola 'keywords' i 'city' są wymagane." });
+      return;
+    }
+
+    const taskRef = db.collection("agent_tasks").doc();
+    response.json({ data: { success: true, taskId: taskRef.id } });
+
+    await taskRef.set({
+        ownerUid: uid,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: "processing",
+        query: data,
+        logs: [{ timestamp: new Date(), message: "Zlecenie przyjęte. Uruchamiam Agenta v2..." }],
+        results: [],
+      });
+
+    runAgent2Logic(data, taskRef);
+  });
+});
+
+--- /home/flowmistrz/platforma-ai/functions/src/agentV3.ts ---
+
+// Ten plik został opróżniony, ponieważ agent V3 został zastąpiony przez V4.
+
+--- /home/flowmistrz/platforma-ai/functions/src/agent_extract.ts ---
+
+
+/*
+* =================================================================
+* AGENT WYODRĘBNIAJĄCY DANE (EXTRACT AGENT)
+* =================================================================
+* Ten agent otrzymuje listę linków, odwiedza każdą stronę
+* za pomocą Puppeteera i wyodrębnia z niej dane kontaktowe.
+* =================================================================
+*/
+import * as admin from 'firebase-admin';
+import * as functions from 'firebase-functions';
+import { DocumentReference } from 'firebase-admin/firestore';
+import { vertex_ai } from './firebase-init';
+import { SchemaType, FunctionDeclaration, Part } from '@google-cloud/vertexai';
+import { v4 as uuidv4 } from 'uuid';
+
+// Funkcja do komunikacji z usługą Puppeteer (skopiowana z agentV3.ts)
+async function execute_puppeteer_action(sessionId: string, action: string, params: any): Promise<any> {
+    const serviceUrl = functions.config().puppeteer.url;
+    if (!serviceUrl) {
+        console.error("Brak konfiguracji usługi Puppeteer.");
+        throw new Error("Brak konfiguracji usługi Puppeteer (puppeteer.url).");
+    }
+    try {
+        const response = await fetch(serviceUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId, action, params }),
+        });
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Błąd usługi: status ${response.status}, treść: ${errorText}`);
+        }
+        return await response.json();
+    } catch (error) {
+        const err = error as Error;
+        console.error(`Krytyczny błąd wywołania Puppeteer: ${err.message}`);
+        return { success: false, error: `Nie udało się połączyć z usługą Puppeteer: ${err.message}` };
+    }
+}
+
+// Logika Agenta Wyodrębniającego Dane
+export async function runExtractAgent(data: any, taskRef: DocumentReference) {
+    const { search_results } = data; // Oczekuje na listę wyników z Agenta Wyszukującego
+    const sessionId = uuidv4();
+
+    if (!search_results || search_results.length === 0) {
+        await taskRef.update({ status: "extract_skipped", logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: "Brak linków do przetworzenia. Kończenie pracy." }) });
+        return;
+    }
+
+    await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Agent Wyodrębniający rozpoczyna pracę. ID sesji Puppeteer: ${sessionId}. Liczba linków: ${search_results.length}` }) });
+
+    const browserTools: FunctionDeclaration[] = [
+        { name: "goToURL", description: "Nawiguje do podanego adresu URL.", parameters: { type: SchemaType.OBJECT, properties: { url: { type: SchemaType.STRING } }, required: ["url"] } },
+        { name: "lookAtPage", description: "Analizuje aktualny widok strony i zwraca listę interaktywnych elementów.", parameters: { type: SchemaType.OBJECT, properties: {} } },
+        { name: "scrapeContent", description: "Pobiera zawartość strony w celu znalezienia danych kontaktowych (email, telefon, adres).", parameters: { type: SchemaType.OBJECT, properties: {} } },
+        { name: "clickElement", description: "Klika w element, np. w przycisk 'Kontakt'.", parameters: { type: SchemaType.OBJECT, properties: { selector: { type: SchemaType.STRING } }, required: ["selector"] } },
+    ];
+
+    const finalReportTool: FunctionDeclaration = {
+        name: "submit_final_report",
+        description: "Użyj tej funkcji, aby zwrócić ostateczną, sformatowaną listę znalezionych firm.",
+        parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+                results: {
+                    type: SchemaType.ARRAY,
+                    description: "Tablica obiektów reprezentujących znalezione firmy.",
+                    items: {
+                        type: SchemaType.OBJECT,
+                        properties: {
+                            companyName: { type: SchemaType.STRING },
+                            sourceUrl: { type: SchemaType.STRING },
+                            phones: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+                            emails: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+                            addresses: { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+                            notes: { type: SchemaType.STRING },
+                        },
+                        required: ["companyName", "sourceUrl"],
+                    },
+                },
+            },
+            required: ["results"],
+        },
+    };
+
+    const generativeModel = vertex_ai.getGenerativeModel({
+        model: "gemini-2.5-pro",
+        tools: [{ functionDeclarations: [...browserTools, finalReportTool] }],
+    });
+
+    const chat = generativeModel.startChat();
+
+    const urlsToProcess = JSON.stringify(search_results.map((r: any) => ({ title: r.title, link: r.link, snippet: r.snippet })));
+
+    const prompt = `Jesteś agentem AI, którego zadaniem jest analiza stron internetowych i zbieranie danych kontaktowych. Otrzymałeś listę linków do przetworzenia: ${urlsToProcess}.\n\n    TWOJE ZADANIE:\n    1.  Dla każdego linku z listy, wykonaj następujące kroki:\n        a. Użyj \\`goToURL\\u0060, aby odwiedzić stronę.\n        b. Użyj \\`lookAtPage\\u0060 i \\`scrapeContent\\u0060, aby znaleźć dane kontaktowe: numery telefonów, adresy e-mail, adresy fizyczne.\n        c. Jeśli dane są ukryte za przyciskiem (np. \\"Pokaż numer\\", \\"Kontakt\"), użyj \\`clickElement\\u0060, aby je odsłonić, a następnie ponownie użyj \\`scrapeContent\\u0060.\n    2.  Zbierz wszystkie znalezione dane dla każdej firmy/strony.\n    3.  Po przeanalizowaniu wszystkich linków, wywołaj funkcję \\`submit_final_report\\u0060 z kompletną listą zebranych danych.\n\n    PAMIĘTAJ:\n    - Skup się wyłącznie na danych kontaktowych.\n    - Jeśli strona to portal (np. Oferteo), spróbuj znaleźć nazwę firmy i zanotuj, że kontakt jest przez portal.\n    - Bądź dokładny i systematyczny.`;
+
+    try {
+        let result = await chat.sendMessage(prompt);
+
+        for (let i = 0; i < (search_results.length * 3 + 2); i++) { // Pętla bezpieczeństwa (3 operacje na link + 2)
+            const functionCalls = result.response.candidates?.[0]?.content?.parts?.filter((part: Part): part is Part & { functionCall: any } => !!part.functionCall);
+
+            if (!functionCalls || functionCalls.length === 0) {
+                break;
+            }
+
+            const apiResponses = [];
+            for (const call of functionCalls) {
+                const { name: action, args: params = {} } = call.functionCall;
+
+                if (action === "submit_final_report") {
+                    const finalResults = (params as any).results || [];
+                    await taskRef.update({
+                        status: "completed",
+                        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        results: finalResults,
+                        logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Agent Wyodrębniający zakończył. Znaleziono dane dla ${finalResults.length} firm.` }),
+                    });
+                    // Zamykamy sesję po zakończeniu
+                    await execute_puppeteer_action(sessionId, "closeSession", {});
+                    return;
+                } else {
+                    await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Agent Wyodrębniający wykonuje: ${action}` }) });
+                    const apiResponse = await execute_puppeteer_action(sessionId, action, params);
+                    apiResponses.push({ functionResponse: { name: action, response: apiResponse } });
+                }
+            }
+            if (apiResponses.length > 0) {
+                result = await chat.sendMessage(apiResponses);
+            }
+        }
+    } catch (error) {
+        const err = error as Error;
+        await taskRef.update({ status: "extract_failed", error: err.message });
+    } finally {
+        // Zawsze zamykaj sesję
+        await execute_puppeteer_action(sessionId, "closeSession", {});
+    }
+}
+
+
+--- /home/flowmistrz/platforma-ai/functions/src/agent_search.ts ---
+
+
+/*
+* =================================================================
+* AGENT WYSZUKUJĄCY (SEARCH AGENT)
+* =================================================================
+* Ten agent jest odpowiedzialny wyłącznie za przeprowadzanie
+* wyszukiwań w Google przy użyciu narzędzia `performSearch`.
+* Jego zadaniem jest zebranie jak najszerszej listy linków
+* do dalszej analizy.
+* =================================================================
+*/
+import * as admin from 'firebase-admin';
+import * as functions from 'firebase-functions';
+import { DocumentReference } from 'firebase-admin/firestore';
+import { vertex_ai } from './firebase-init';
+import { SchemaType, FunctionDeclaration, Part } from '@google-cloud/vertexai';
+
+// Funkcja do obsługi wyszukiwania (skopiowana z agentV3.ts)
+async function execute_search_action(query: string, num_results: number = 10): Promise<any> {
+    const apiKey = functions.config().search.key;
+    const searchEngineId = functions.config().search.cx;
+
+    if (!apiKey || !searchEngineId) {
+        console.error("Brak konfiguracji wyszukiwarki.");
+        return { success: false, error: "Brak konfiguracji wyszukiwarki (search.key lub search.cx)." };
+    }
+    const url = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${searchEngineId}&q=${encodeURIComponent(query)}&num=${num_results}`;
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            const errorText = await response.text();
+            return { success: false, error: `Błąd API wyszukiwarki: status ${response.status}, treść: ${errorText}` };
+        }
+        const result = await response.json();
+        const items = result.items?.map((item: any) => ({
+            title: item.title,
+            link: item.link,
+            snippet: item.snippet,
+            displayLink: item.displayLink
+        })) || [];
+        return { success: true, results: items };
+    } catch (error) {
+        const err = error as Error;
+        return { success: false, error: `Nie udało się połączyć z API wyszukiwarki: ${err.message}` };
+    }
+}
+
+// Logika Agenta Wyszukującego
+export async function runSearchAgent(data: any, taskRef: DocumentReference) {
+    const { query, słowa_kluczowe, lokalizacja } = data || {};
+    const fullQuery = słowa_kluczowe ? `${słowa_kluczowe} ${lokalizacja}` : query;
+
+    await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Agent Wyszukujący rozpoczyna pracę. Query: ${fullQuery}` }) });
+
+    const searchTool: FunctionDeclaration = {
+        name: "performSearch",
+        description: "Wykonaj wyszukiwanie w search engine.",
+        parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+                query: { type: SchemaType.STRING, description: "Pełne zapytanie wyszukiwania." },
+                num_results: { type: SchemaType.INTEGER, description: "Liczba wyników (domyślnie 10, max 10)." },
+            },
+            required: ["query"],
+        },
+    };
+
+    const submitResultsTool: FunctionDeclaration = {
+        name: "submit_search_results",
+        description: "Użyj tej funkcji, aby zwrócić ostateczną listę zebranych linków i fragmentów.",
+        parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+                results: {
+                    type: SchemaType.ARRAY,
+                    description: "Tablica obiektów z wynikami wyszukiwania.",
+                    items: {
+                        type: SchemaType.OBJECT,
+                        properties: {
+                            title: { type: SchemaType.STRING },
+                            link: { type: SchemaType.STRING },
+                            snippet: { type: SchemaType.STRING },
+                        },
+                        required: ["title", "link", "snippet"],
+                    },
+                },
+            },
+            required: ["results"],
+        },
+    };
+
+    const generativeModel = vertex_ai.getGenerativeModel({
+        model: "gemini-2.5-pro",
+        tools: [{ functionDeclarations: [searchTool, submitResultsTool] }],
+    });
+
+    const chat = generativeModel.startChat();
+
+    const prompt = `Jesteś prostym agentem AI. Twoim jedynym zadaniem jest wywołanie narzędzia 'performSearch' z zapytaniem "${fullQuery}", a następnie natychmiastowe wywołanie narzędzia 'submit_search_results' z otrzymanymi wynikami. Nie rób nic więcej.`;
+
+    try {
+        let result = await chat.sendMessage(prompt);
+
+        for (let i = 0; i < 5; i++) { // Pętla bezpieczeństwa
+            const functionCalls = result.response.candidates?.[0]?.content?.parts?.filter((part: Part): part is Part & { functionCall: any } => !!part.functionCall);
+
+            if (!functionCalls || functionCalls.length === 0) {
+                break;
+            }
+
+            const apiResponses = [];
+            for (const call of functionCalls) {
+                const { name: action, args: params = {} } = call.functionCall;
+
+                if (action === "submit_search_results") {
+                    const finalResults = (params as any).results || [];
+                    await taskRef.update({
+                        status: "search_completed",
+                        search_results: finalResults,
+                        logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Agent Wyszukujący zakończył pracę. Znaleziono ${finalResults.length} linków.` }),
+                    });
+                    return;
+                } else if (action === "performSearch") {
+                    await taskRef.update({ logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Agent Wyszukujący wykonuje zapytanie: ${params.query}` }) });
+                    const apiResponse = await execute_search_action(params.query, params.num_results || 10);
+                    apiResponses.push({ functionResponse: { name: action, response: apiResponse } });
+                }
+            }
+            if (apiResponses.length > 0) {
+                result = await chat.sendMessage(apiResponses);
+            }
+        }
+    } catch (error) {
+        const err = error as Error;
+        await taskRef.update({ status: "search_failed", error: err.message });
+    }
+}
+
+
+--- /home/flowmistrz/platforma-ai/functions/src/firebase-init.ts ---
+
+import * as admin from "firebase-admin";
+import { VertexAI } from "@google-cloud/vertexai";
+
+admin.initializeApp({ projectId: "automatyzacja-pesamu" });
+
+export const db = admin.firestore();
+export const vertex_ai = new VertexAI({ project: "automatyzacja-pesamu", location: "europe-west4" });
+
+
+--- /home/flowmistrz/platforma-ai/functions/src/index.ts ---
+
+import { onCall, onRequest, HttpsError } from "firebase-functions/v2/https";
+import { setGlobalOptions } from "firebase-functions/v2";
+import * as admin from "firebase-admin";
+import cors from "cors";
+import { runAgent2Logic } from "./agentV2";
+import { runSearchAgent } from "./agent_search";
+import { runExtractAgent } from "./agent_extract";
+import { db, vertex_ai } from "./firebase-init";
+
+setGlobalOptions({ region: "europe-west1" });
+
+const generativeModel = vertex_ai.getGenerativeModel({
+  model: "gemini-2.5-pro",
+});
+
+const corsHandler = cors({ origin: true });
+
+// --- NOWA FUNKCJA DLA AGENTA 1 (ETAP 1) ---
+export const agent1_expandKeywords = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Musisz być zalogowany.");
+  }
+  const { specialization } = request.data;
+  if (!specialization) {
+    throw new HttpsError("invalid-argument", "Pole \'specjalizacja\' jest wymagane.");
+  }
+
+  const prompt = `Jesteś światowej klasy ekspertem w polskiej branży budowlanej i specjalistą od marketingu internetowego. Twoim zadaniem jest przeanalizowanie zapytania użytkownika i wyizolowanie GŁÓWNEJ USŁUGI BUDOWLANEJ/RZEMIOSŁA. Następnie, na podstawie wyizolowanej usługi, kreatywnie rozbudujesz zbiór fraz kluczowych oraz zidentyfikujesz pasujące kody PKD.
+
+**WYTYCZNE KRYTYCZNE:**
+1.  **Ignoruj Lokalizację:** Wszelkie wzmianki o lokalizacji (np. miasto, województwo, "w pobliżu", "okolice") muszą być całkowicie zignorowane i nie mogą być częścią generowanych fraz kluczowych. Interesuje nas czysta usługa (np. "brukarstwo", "ocieplanie budynków").
+2.  **Profesjonalna Terminologia:** Generowane frazy muszą być profesjonalne i obejmować zarówno potoczne nazwy, jak i techniczne/biznesowe synonimy (np. dla "ocieplanie budynków" to także "termomodernizacja").
+
+Oryginalne zapytanie użytkownika: "${specialization}"
+
+**Zadania do wykonania:**
+1.  **Identyfikacja Usługi:** Zidentyfikuj i wyodrębnij jedną, główną usługę budowlaną lub rzemiosło z zapytania użytkownika.
+2.  **Generowanie Kluczowych Fraz:** Wygeneruj listę 8-12 unikalnych, alternatywnych i synonimicznych fraz oraz słów kluczowych, które profesjonalnie opisują zidentyfikowaną usługę. Uwzględnij formy rzeczownikowe (np. "brukarz") oraz czynności (np. "układanie kostki brukowej").
+3.  **Kody PKD:** Na podstawie zidentyfikowanej usługi i wygenerowanych fraz, zidentyfikuj 1-3 najbardziej prawdopodobne, pasujące kody PKD (Polskiej Klasyfikacji Działalności) dla firm świadczących tę usługę.
+
+Zwróć wynik wyłącznie w formacie JSON, bez żadnych dodatkowych komentarzy, formatowania markdown (bez ```json) ani wyjaśnień. Struktura JSON musi być następująca:
+{
+  "identifiedService": "Główna usługa wyodrębniona z zapytania",
+  "keywords": ["fraza_1", "fraza_2", "fraza_3", "fraza_4", "fraza_5", "fraza_6", "fraza_7", "fraza_8"],
+  "pkdCodes": ["kod_pkd_1", "kod_pkd_2", "kod_pkd_3"]
+}
+`;
+
+  try {
+    const result = await generativeModel.generateContent(prompt);
+    const response = result.response;
+    const responseText = response.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!responseText) {
+      throw new Error("Otrzymano pustą odpowiedź od AI.");
+    }
+    console.log("Raw response from AI:", responseText);
+
+    const jsonMatch = responseText.match(/{[\s\S]*}/);
+    if (!jsonMatch || !jsonMatch[0]) {
+        console.error("Could not find a JSON object in the AI response.");
+        throw new Error("Could not find a JSON object in the AI response.");
+    }
+    
+    const extractedJSON = jsonMatch[0];
+    console.log("Extracted JSON string:", extractedJSON);
+
+    try {
+      const parsedResult = JSON.parse(extractedJSON);
+      console.log("Successfully parsed JSON:", parsedResult);
+      return parsedResult;
+    } catch (e) {
+        console.error("Failed to parse the extracted JSON string.", e);
+        throw new Error("Failed to parse the extracted JSON string.");
+    }
+  } catch (error) {
+    console.error("Błąd podczas komunikacji z Vertex AI:", error);
+    throw new HttpsError("internal", "Błąd podczas generowania sugestii AI.");
+  }
+});
+
+
+export const runAgent1_findSubcontractors = onRequest({ secrets: ["GOOGLE_MAPS_API_KEY"] }, (request, response) => {
+  corsHandler(request, response, async () => {
+    const idToken = request.headers.authorization?.split("Bearer ")[1];
+    if (!idToken) {
+      response.status(401).send("Unauthorized");
+      return;
+    }
+    let decodedToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (error) {
+      response.status(401).send("Unauthorized");
+      return;
+    }
+
+    const uid = decodedToken.uid;
+    const data = request.body;
+    const { specialization, city, sources } = data || {};
+
+    if (!specialization || !city) {
+      response.status(400).json({ error: "Pola \'specjalizacja\' i \'miasto\' są wymagane." });
+      return;
+    }
+
+    const taskRef = db.collection("agent_tasks").doc();
+    
+    response.json({ data: { success: true, taskId: taskRef.id } });
+
+    try {
+      await taskRef.set({
+        ownerUid: uid,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: "processing",
+        query: data,
+        logs: [
+          { timestamp: new Date(), message: "Zlecenie przyjęte. Agent rozpoczyna pracę..." }
+        ],
+        results: [],
+      });
+
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      await taskRef.update({
+        logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `ETAP 1: Rozpoczynam analizę AI dla zapytania: "${specialization}"` })
+      });
+      const expandedQuery = await expandQueryWithAI(specialization);
+      await taskRef.update({
+        logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `AI wygenerowało słowa kluczowe: ${expandedQuery.keywords.join(", ")}` })
+      });
+
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      await taskRef.update({
+        logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `ETAP 2: Przeszukuję wybrane źródła...` })
+      });
+      let initialResults: any[] = [];
+      if (sources.google) {
+        initialResults.push({ name: `Budex - ${specialization}`, source: "Google", nip: "123-456-78-90" });
+        initialResults.push({ name: `Mal-Pol (usługi: ${expandedQuery.keywords[1]})`, source: "Google", nip: "987-654-32-10" });
+      }
+      if (sources.ceidg) {
+        initialResults.push({ name: "Jan Kowalski Budownictwo", source: "CEIDG", nip: "111-222-33-44" });
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      const uniqueCompanies = Array.from(new Map(initialResults.map(item => [item.nip, item])).values());
+      await taskRef.update({
+        logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `ETAP 3: Znaleziono ${uniqueCompanies.length} unikalnych firm. Rozpoczynam wzbogacanie danych...` })
+      });
+
+      const enrichedCompanies = [];
+      for (const company of uniqueCompanies) {
+        const enrichedData = await enrichCompanyData(company, specialization);
+        enrichedCompanies.push(enrichedData);
+        await taskRef.update({
+          logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `Wzbogacono dane dla: "${company.name}"` })
+        });
+      }
+
+      // Instead of completing, hand over to Agent V2
+      await taskRef.update({
+        logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: `ETAP 4: Przekazuję zebrane dane do Agenta v2 w celu inteligentnego wyszukiwania...` })
+      });
+
+      // Call Agent V2 logic directly
+      await runAgent2Logic(data, taskRef);
+
+    } catch (error) {
+      const err = error as Error;
+      await taskRef.update({ status: "failed", error: err.message });
+    }
+  });
+});
+
+async function expandQueryWithAI(specialization: string): Promise<{ keywords: string[], pkdCodes: string[] }> {
+  console.log(`AI: Rozszerzam zapytanie dla: "${specialization}"`);
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  return Promise.resolve({
+    keywords: [specialization, `układanie ${specialization}`, `firma ${specialization}`],
+    pkdCodes: ["43.99.Z", "43.33.Z"],
+  });
+}
+
+async function enrichCompanyData(company: any, specialization: string): Promise<any> {
+  console.log(`AI: Weryfikuję i wzbogacam dane dla: "${company.name}"`);
+  await new Promise(resolve => setTimeout(resolve, 500));
+  const email = `kontakt@${company.name.toLowerCase().replace(/\s/g, "")}.pl`;
+  const phone = `+48 555 ${Math.floor(Math.random() * 900) + 100} ${Math.floor(Math.random() * 900) + 100}`;
+  const match = Math.random() > 0.3 ? "Wysokie" : "Niskie";
+  const rating = (Math.random() * (5 - 3.5) + 3.5).toFixed(1);
+
+  return {
+    ...company,
+    email,
+    phone,
+    match,
+    rating,
+  };
+}
+
+export const inviteUser = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError(
+      "unauthenticated",
+      "Musisz być zalogowany, aby zapraszać użytkowników."
+    );
+  }
+  const adminUid = request.auth.uid;
+  const { newUserEmail, newUserName, newUserPassword, companyId } = request.data;
+  const adminProfileRef = admin.firestore().collection("users").doc(adminUid);
+  const adminProfileSnap = await adminProfileRef.get();
+  const adminProfile = adminProfileSnap.data();
+  if (!adminProfile || adminProfile.role !== "company-admin" || adminProfile.companyId !== companyId) {
+    throw new HttpsError(
+      "permission-denied",
+      "Nie masz uprawnień do dodawania użytkowników do tej firmy."
+    );
+  }
+  try {
+    const newUserRecord = await admin.auth().createUser({
+      email: newUserEmail,
+      displayName: newUserName,
+      password: newUserPassword,
+    });
+    await admin.firestore().collection("users").doc(newUserRecord.uid).set({
+      uid: newUserRecord.uid,
+      email: newUserEmail,
+      name: newUserName,
+      companyId: companyId,
+      role: "company-user",
+    });
+    return { success: true, message: `Użytkownik ${newUserEmail} został pomyślnie dodany.` };
+  } catch (error: any) {
+    console.error("Błąd podczas tworzenia użytkownika:", error);
+    if (error.code === 'auth/email-already-exists') {
+        throw new HttpsError('already-exists', 'Ten adres e-mail jest już zarejestrowany.');
+    }
+    throw new HttpsError(
+      "internal",
+      "Wystąpił nieoczekiwany błąd serwera."
+    );
+  }
+});
+
+export * from "./agentV2";
+
+// Trivial change to force redeployment
+
+export const agentV4_orchestrator = onRequest(
+  { 
+    cors: true, // Użycie wbudowanej, prostej obsługi CORS
+    timeoutSeconds: 540,
+    memory: "2GiB",
+    cpu: 4,
+    secrets: ["GOOGLE_MAPS_API_KEY"]
+  }, 
+  async (request, response) => {
+    try {
+      const idToken = request.headers.authorization?.split("Bearer ")[1];
+      if (!idToken) { 
+        response.status(401).send("Unauthorized"); 
+        return; 
+      }
+      
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const uid = decodedToken.uid;
+      const data = request.body;
+      const { query, słowa_kluczowe } = data || {};
+
+      if (!query && !słowa_kluczowe) {
+        response.status(400).json({ error: "Pole 'query' lub 'słowa_kluczowe' jest wymagane." });
+        return;
+      }
+
+      const taskRef = db.collection("agent_tasks_v4").doc();
+
+      await taskRef.set({
+          ownerUid: uid,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          status: "processing_search",
+          query: data,
+          agentVersion: "v4-orchestrator",
+          logs: [{ timestamp: new Date(), message: "Zlecenie przyjęte. Uruchamiam Agenta Wyszukującego..." }],
+          results: [],
+        });
+
+        // Uruchomienie logiki agenta w tle
+        runSearchAgent(data, taskRef).then(async () => {
+            const taskSnapshot = await taskRef.get();
+            const taskData = taskSnapshot.data();
+
+            if (taskData?.status === 'search_completed' && taskData?.search_results) {
+                await taskRef.update({
+                    status: "processing_extraction",
+                    logs: admin.firestore.FieldValue.arrayUnion({ timestamp: new Date(), message: "Wyszukiwanie zakończone. Uruchamiam Agenta Wyodrębniającego..." }),
+                });
+                await runExtractAgent({ search_results: taskData.search_results }, taskRef);
+            } else {
+                throw new Error("Agent Wyszukujący nie zakończył pracy poprawnie lub nie zwrócił wyników.");
+            }
+        }).catch(async (error) => {
+            const err = error as Error;
+            console.error("Błąd w agentV4_orchestrator (async logic):", err);
+            await taskRef.update({ status: "failed", error: err.message });
+        });
+
+      // Zwróć natychmiastową odpowiedź z ID zadania
+      response.status(200).json({ data: { success: true, taskId: taskRef.id } });
+
+    } catch (error) {
+        const err = error as Error;
+        console.error("Błąd w agentV4_orchestrator (request handling):", err);
+        response.status(500).send("Internal Server Error");
+    }
+});
+
+export * from "./test_cors";
+
+// Force redeploy at 2025-10-05T13:55:00Z
+
+--- /home/flowmistrz/platforma-ai/functions/src/read-task.ts ---
+
+import { db } from "./firebase-init";
+import * as admin from "firebase-admin";
+
+// Ten skrypt odczytuje konkretny dokument zadania z Firestore.
+
+async function readTask() {
+  const taskId = "bCq7dIuvYpp8C34feTnB"; // ID zadania z ostatniego testu
+  console.log(`Odczytuję zadanie o ID: ${taskId} z Firestore...`);
+
+  const taskRef = db.collection("agent_tasks").doc(taskId);
+  const docSnap = await taskRef.get();
+
+  if (!docSnap.exists) {
+    console.log("Nie znaleziono dokumentu o tym ID.");
+  } else {
+    console.log("Dane dokumentu:");
+    console.log(JSON.stringify(docSnap.data(), null, 2));
+  }
+}
+
+readTask().then(async () => {
+  console.log("\nSkrypt odczytujący zakończył pracę.");
+  await admin.app().delete();
+  process.exit(0);
+}).catch(async (error) => {
+  console.error("Skrypt odczytujący napotkał błąd:", error);
+  try {
+    await admin.app().delete();
+  } catch (e) {
+    // ignoruj błąd przy zamykaniu
+  }
+  process.exit(1);
+});
+
+
+--- /home/flowmistrz/platforma-ai/functions/src/test-agent.ts ---
+
+// import { runAgent3Logic } from "./agentV3"; // Usunięto, ponieważ nie jest już używane
+import { db } from "./firebase-init";
+import * as admin from "firebase-admin";
+
+// Ten skrypt służy do testowania logiki agenta v3.
+// Symuluje utworzenie zadania i uruchamia agenta.
+
+async function testAgent() {
+const testQuery = {
+    query: "Znajdź szczegółowe informacje o firmach świadczących usługi 'brukarz' w mieście Poznań, korzystając z portali Oferteo i Fixly. Wejdź na każdą znalezioną stronę, spróbuj znaleźć dane kontaktowe (telefon, e-mail) i zapisz je.",
+  };
+
+  const uid = "test-user-id"; // Mockowy identyfikator użytkownika
+
+  console.log("Tworzenie nowego zadania w Firestore...");
+
+  const taskRef = db.collection("agent_tasks").doc();
+
+  await taskRef.set({
+    ownerUid: uid,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    status: "processing",
+    query: testQuery,
+    agentVersion: "v3-test-script",
+    logs: [{ timestamp: new Date(), message: "Test zainicjowany przez skrypt test-agent.ts." }],
+    results: [],
+  });
+
+  console.log(`Zadanie utworzone z ID: ${taskRef.id}`);
+  console.log("Uruchamianie logiki agenta... Skrypt zakończy działanie.");
+  console.log("Możesz monitorować zadanie w konsoli Firebase lub za pomocą logów.");
+
+  // Usunięto bezpośrednie wywołanie runAgent3Logic.
+  // Skrypt teraz tylko tworzy zadanie i kończy pracę.
+  // Prawdziwa funkcja w chmurze podejmie to zadanie.
+}
+
+testAgent().then(async () => {
+  console.log("Skrypt testowy zakończył pracę.");
+  // Zamykamy połączenie z Firebase, aby skrypt mógł się czysto zakończyć.
+  await admin.app().delete();
+  process.exit(0);
+}).catch(async (error) => {
+  console.error("Skrypt testowy napotkał błąd:", error);
+  try {
+    await admin.app().delete();
+  } catch (e) {
+    console.error("Błąd podczas zamykania aplikacji Firebase:", e);
+  }
+  process.exit(1);
+});
+
+
+--- /home/flowmistrz/platforma-ai/functions/src/test_cors.ts ---
+
+import { onRequest } from "firebase-functions/v2/https";
+
+export const testCors = onRequest(
+  { cors: true },
+  (request, response) => {
+    console.log("Funkcja test_cors została wywołana.");
+    response.status(200).send("Test CORS udany! Jeśli widzisz tę wiadomość, wbudowany CORS działa.");
+  }
+);
+
+
+
+--- End of content ---

@@ -3,21 +3,17 @@
 from fastapi import FastAPI, Request, HTTPException
 from vertexai.preview.reasoning_engines import A2aAgent
 
+# Importy z nowo utworzonego pliku agenta
 from app.agents.enricher import (
     agent_card as enricher_agent_card,
     EnricherAgentExecutor,
     enricher_llm_agent,
 )
-from app.orchestrator import (
-    agent_card as orchestrator_agent_card,
-    OrchestratorAgentExecutor,
-    orchestrator_llm_agent,
-)
 
 # Inicjalizacja aplikacji FastAPI
 app = FastAPI(
-    title="Agent Pro Max Service",
-    description="Serwis hostujący agentów AI zbudowanych w oparciu o ADK.",
+    title="Agent Pro Max Service (Enricher)",
+    description="Serwis hostujący agenta EnricherProMax zbudowanego w oparciu o ADK.",
 )
 
 # Stworzenie i skonfigurowanie agenta EnricherProMax
@@ -30,27 +26,17 @@ enricher_agent = A2aAgent(
 enricher_agent.set_up()
 
 
-# Stworzenie i skonfigurowanie agenta Orchestrator
-orchestrator_agent = A2aAgent(
-    agent_card=orchestrator_agent_card,
-    agent_executor_builder=lambda: OrchestratorAgentExecutor(
-        agent=orchestrator_llm_agent,
-    )
-)
-orchestrator_agent.set_up()
-
-# Endpoint do komunikacji z agentem
-@app.post("/agent/enricherProMax")
+# Endpointy dla agenta EnricherProMax
+@app.post("/agent/EnricherProMax")
 async def message_agent(request: Request):
     """Endpoint do wysyłania wiadomości do agenta i tworzenia zadania."""
     try:
-        # Przekazanie surowego zapytania do metody agenta, która zajmie się walidacją i przetwarzaniem
         response = await enricher_agent.on_message_send(request=request, context=None)
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/agent/enricherProMax/card")
+@app.get("/agent/EnricherProMax/card")
 async def get_agent_card(request: Request):
     """Endpoint do pobierania wizytówki agenta."""
     try:
@@ -62,23 +48,3 @@ async def get_agent_card(request: Request):
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
-
-
-# Endpoints dla Orchestrator
-@app.post("/agent/orchestrator")
-async def message_orchestrator(request: Request):
-    """Endpoint do wysyłania wiadomości do agenta orkiestratora."""
-    try:
-        response = await orchestrator_agent.on_message_send(request=request, context=None)
-        return response
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/agent/orchestrator/card")
-async def get_orchestrator_card(request: Request):
-    """Endpoint do pobierania wizytówki agenta orkiestratora."""
-    try:
-        response = await orchestrator_agent.handle_authenticated_agent_card(request=request, context=None)
-        return response
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

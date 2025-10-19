@@ -8,21 +8,12 @@ const Sidebar = () => {
 
   return (
     <aside>
-      <div className="description">Możesz przeciągnąć agenty na planszę po prawej stronie.</div>
-      <div className="dndnode ceidg-searcher" onDragStart={(event) => onDragStart(event, 'CEIDG-Searcher')} draggable>
-        CEIDG-Searcher Agent
+      <div className="description">Przeciągnij źródło danych na planszę, aby rozpocząć.</div>
+      <div className="dndnode ceidg-searcher" onDragStart={(event) => onDragStart(event, 'source-ceidg')} draggable>
+        Wyszukiwanie w CEIDG
       </div>
-      <div className="dndnode enricher" onDragStart={(event) => onDragStart(event, 'Enricher')} draggable>
-        Enricher Agent
-      </div>
-      <div className="dndnode searcher" onDragStart={(event) => onDragStart(event, 'Searcher')} draggable>
-        Searcher Agent
-      </div>
-      <div className="dndnode classifier" onDragStart={(event) => onDragStart(event, 'Classifier')} draggable>
-        Classifier Agent
-      </div>
-      <div className="dndnode scraper" onDragStart={(event) => onDragStart(event, 'Scraper')} draggable>
-        Scraper Agent
+      <div className="dndnode searcher" onDragStart={(event) => onDragStart(event, 'source-google')} draggable>
+        Wyszukiwanie w Google
       </div>
     </aside>
   );

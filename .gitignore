@@ -1,10 +1,10 @@
 # Ignoruj foldery bibliotek Node.js
 node_modules/
-**/node_modules/  # Dla podfolderów, np. /functions/node_modules/
+**/node_modules/
 
 # Ignoruj foldery wirtualnego środowiska Pythona
 venv/
-**/venv/  # Dla podfolderów, np. /agent-pro-max-service/venv/
+**/venv/
 *.venv/
 .env/
 .env.local
@@ -16,11 +16,13 @@ __pycache__/
 *.pyo
 *.pyd
 
-# Ignoruj buildy i disty
+# Ignoruj buildy, disty i skompilowane biblioteki
 build/
 dist/
+lib/
 **/build/
 **/dist/
+**/lib/
 
 # Ignoruj pliki logów i debuga
 *.log
@@ -50,6 +52,8 @@ chrome/
 
 # Ignoruj pliki Firebase (jeśli używasz)
 .firebase/
-functions/node_modules/  # Jeśli masz Firebase Functions
+
+# Ignoruj pliki z kluczami i sekretami
+klucze interfejsu api.txt
 
 # Dodaj tu własne wzorce, jeśli potrzeba

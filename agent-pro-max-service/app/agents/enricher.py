@@ -121,6 +121,10 @@ class EnricherAgentExecutor(AgentExecutor):
             )
 
         except Exception as e:
+            import traceback
+            print("!!!!! ENCOUNTERED AN EXCEPTION !!!!!")
+            traceback.print_exc()
+            print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
             await updater.update_status(
                 TaskState.failed,
                 message=new_agent_text_message(f"Wystąpił błąd: {str(e)}"),

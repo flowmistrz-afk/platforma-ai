@@ -1,0 +1,8 @@
+.action-node {
+  padding: 5px 10px;
+  font-size: 10px;
+  border-radius: 3px;
+  background: #f0f0f0;
+  border: 1px solid #ccc;
+  text-align: center;
+}

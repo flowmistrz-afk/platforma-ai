@@ -20,6 +20,7 @@ import Sidebar from './Sidebar';
 import ContextMenu from './ContextMenu';
 import StartNode from './StartNode';
 import AgentNode from './AgentNode';
+
 import './WorkflowBuilder.css';
 import { useWorkflowStore, StartNodeData } from '../../stores/workflowStore';
 import pkdData from '../../data/pkd-database.json';
@@ -31,7 +32,8 @@ interface PkdOption {
 
 const nodeTypes = { 
   startNode: StartNode,
-  agentNode: AgentNode, 
+  'source-ceidg': AgentNode,
+  'source-google': AgentNode,
 };
 
 let id = 1;
@@ -41,13 +43,74 @@ const DnDFlow = () => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [menu, setMenu] = useState<{ id: string; top: number; left: number; } | null>(null);
-  const [showModal, setShowModal] = useState(false);
+  const [menu, setMenu] = useState<{ id: string; top: number; left: number; nodeType: string; } | null>(null);
+  const [showConfigModal, setShowConfigModal] = useState(false);
   const [isStartNodeCreated, setIsStartNodeCreated] = useState(false);
+  const [actionsModalNode, setActionsModalNode] = useState<ReactFlowNode | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
   
-  const { startNodeData, setStartNodeData } = useWorkflowStore();
-  // Używamy poprawnej struktury danych z pkdCodes i pkdSection
-  const [formData, setFormData] = useState<StartNodeData>(startNodeData || { query: '', city: '', province: '', pkdSection: '', pkdCodes: [], radius: 50 });
+    const { startNodeData, setStartNodeData } = useWorkflowStore();
+  
+    const deleteAction = useCallback((nodeId: string, actionNameToDelete: string) => {
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id === nodeId) {
+            const updatedActions = node.data.actions?.filter((action: string) => action !== actionNameToDelete) || [];
+            return { ...node, data: { ...node.data, actions: updatedActions } };
+          }
+          return node;
+        })
+      );
+      // Also update the node in the modal state to re-render the modal content
+      setActionsModalNode(prev => prev ? {...prev, data: {...prev.data, actions: prev.data.actions?.filter((action: string) => action !== actionNameToDelete) || []}} : null);
+    }, [setNodes]);
+  
+    const closeActionsModal = () => setActionsModalNode(null);
+    
+    const runWorkflow = useCallback(async () => {
+      setIsLoading(true);
+  
+      const sourceNode = nodes.find(node => node.type?.startsWith('source-'));
+      if (!sourceNode) {
+        alert("Proszę, dodaj na planszę źródło danych (np. Wyszukiwanie w CEIDG).");
+        setIsLoading(false);
+        return;
+      }
+  
+      const payload = {
+        initial_query: startNodeData,
+        actions: {
+          filter_by_name: sourceNode.data.actions?.includes('zawęź wyszukiwanie') || false,
+          enrich_contacts: sourceNode.data.actions?.includes('spróbuj pozyskać kontakty') || false,
+        }
+      };
+  
+      console.log("Wysyłanie zlecenia do BrainAgent:", JSON.stringify(payload, null, 2));
+  
+      try {
+        const response = await fetch('http://localhost:8080/agent/orchestrator', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ input: payload }),
+        });
+  
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+        }
+  
+        const data = await response.json();
+        console.log("Otrzymano odpowiedź od BrainAgent:", data);
+        alert("Workflow zakończony! Sprawdź konsolę przeglądarki, aby zobaczyć wyniki.");
+  
+      } catch (error) {
+        console.error("Błąd podczas komunikacji z BrainAgent:", error);
+        alert(`Błąd podczas uruchamiania workflow: ${error}`);
+      } finally {
+        setIsLoading(false);
+      }
+    }, [nodes, startNodeData]);  // Używamy poprawnej struktury danych z pkdCodes i pkdSection
+  const [formData, setFormData] = useState<StartNodeData>({ query: '', city: '', province: '', pkdSection: '', pkdCodes: [], radius: 50 });
 
   const pkdSectionOptions = useMemo(() => pkdData.map(section => ({
     value: section.kod,
@@ -88,7 +151,7 @@ const DnDFlow = () => {
 
   const handleFormSubmit = () => {
     setStartNodeData(formData);
-    setShowModal(false);
+    setShowConfigModal(false)
 
     const startNodeExists = nodes.some(n => n.id === 'start');
 
@@ -107,7 +170,13 @@ const DnDFlow = () => {
   };
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: ReactFlowNode) => {
-    if (node.id === 'start') setShowModal(true);
+    if (node.id === 'start') {
+      setShowConfigModal(true);
+    }
+    // Check if the click target is the action badge
+    if ((event.target as HTMLElement).classList.contains('action-badge')) {
+      setActionsModalNode(node);
+    }
   }, []);
 
   const onConnect = (params: ReactFlowEdge | ReactFlowConnection) => setEdges((eds) => addEdge(params, eds));
@@ -127,7 +196,15 @@ const DnDFlow = () => {
       if (typeof type === 'undefined' || !type) return;
 
       const position = reactFlowInstance.project({ x: event.clientX - reactFlowBounds.left, y: event.clientY - reactFlowBounds.top });
-      const newNode: ReactFlowNode = { id: getId(), type: 'agentNode', position, data: { label: `${type} Agent` } };
+      
+      let label = '';
+      if (type === 'source-ceidg') {
+        label = 'Wyszukiwanie w CEIDG';
+      } else if (type === 'source-google') {
+        label = 'Wyszukiwanie w Google';
+      }
+
+      const newNode: ReactFlowNode = { id: getId(), type, position, data: { label, actions: [] } };
       setNodes((nds) => nds.concat(newNode));
     },
     [reactFlowInstance, setNodes]
@@ -136,19 +213,40 @@ const DnDFlow = () => {
   const onNodeContextMenu = useCallback((event: React.MouseEvent, node: ReactFlowNode) => {
     event.preventDefault();
     if (node.id === 'start') return;
-    setMenu({ id: node.id, top: event.clientY, left: event.clientX });
+    setMenu({ id: node.id, top: event.clientY, left: event.clientX, nodeType: node.type || 'default' });
   }, [setMenu]);
 
   const onPaneClick = useCallback(() => setMenu(null), [setMenu]);
 
-  const deleteNode = useCallback((idToDelete: string) => {
-    setNodes((nds) => nds.filter((node) => node.id !== idToDelete));
-    setMenu(null);
-  }, [setNodes]);
+        const deleteNode = useCallback((idToDelete: string) => {
+          setNodes((nds) => nds.filter((node) => node.id !== idToDelete));
+          setMenu(null);
+        }, [setNodes]);
+  
+      const selectAction = useCallback((nodeId: string, actionName: string) => {
+        setNodes((nds) =>
+          nds.map((node) => {
+            if (node.id === nodeId) {
+              // Add the new action, avoiding duplicates
+              const newActions = node.data.actions ? [...node.data.actions, actionName] : [actionName];
+              const uniqueActions = Array.from(new Set(newActions));
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  actions: uniqueActions,
+                },
+              };
+            }
+            return node;
+          })
+        );
+        setMenu(null);
+      }, [setNodes]);
 
-  return (
+      return (
     <>
-      {!isStartNodeCreated && <div className="start-button-wrapper"><Button onClick={() => setShowModal(true)} size="lg">Rozpocznij Konfigurację</Button></div>}
+      {!isStartNodeCreated && <div className="start-button-wrapper"><Button onClick={() => setShowConfigModal(true)} size="lg">Rozpocznij Konfigurację</Button></div>}
       <div className="dndflow">
           <Sidebar />
           <div className="reactflow-wrapper" ref={reactFlowWrapper}>
@@ -157,11 +255,15 @@ const DnDFlow = () => {
               <MiniMap />
               <Background />
             </ReactFlow>
+            <div style={{ position: 'absolute', right: 30, bottom: 30, zIndex: 10 }}>
+              <Button onClick={runWorkflow} disabled={isLoading || !isStartNodeCreated} size="lg" variant="primary">
+                {isLoading ? 'Przetwarzanie...' : 'Uruchom Workflow'}
+              </Button>
+            </div>
           </div>
-          {menu && <ContextMenu {...menu} onClose={onPaneClick} onDelete={deleteNode} />}
+          {menu && <ContextMenu id={menu.id} top={menu.top} left={menu.left} nodeType={menu.nodeType} onClose={onPaneClick} onDelete={deleteNode} onSelectAction={selectAction} />}
       </div>
-
-      <Modal show={showModal} onHide={() => setShowModal(false)} centered size="lg">
+      <Modal show={showConfigModal} onHide={() => setShowConfigModal(false)} centered size="lg">
         <Modal.Header closeButton><Modal.Title>Konfiguracja Początkowa</Modal.Title></Modal.Header>
         <Modal.Body>
           <Form>
@@ -205,8 +307,38 @@ const DnDFlow = () => {
 
           </Form>
         </Modal.Body>
-        <Modal.Footer><Button variant="secondary" onClick={() => setShowModal(false)}>Anuluj</Button><Button variant="primary" onClick={handleFormSubmit}>Zapisz</Button></Modal.Footer>
+        <Modal.Footer><Button variant="secondary" onClick={() => setShowConfigModal(false)}>Anuluj</Button><Button variant="primary" onClick={handleFormSubmit}>Zapisz</Button></Modal.Footer>
       </Modal>
+
+      {/* Actions Modal */}
+      {actionsModalNode && (
+        <Modal show={true} onHide={closeActionsModal} centered>
+          <Modal.Header closeButton>
+            <Modal.Title>Akcje dla: {actionsModalNode.data.label}</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            {actionsModalNode.data.actions?.length > 0 ? (
+              <ul className="list-group">
+                {actionsModalNode.data.actions.map((action: string, index: number) => (
+                  <li key={index} className="list-group-item d-flex justify-content-between align-items-center">
+                    {action}
+                    <Button variant="danger" size="sm" onClick={() => deleteAction(actionsModalNode.id, action)}>
+                      Usuń
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p>Brak wybranych akcji.</p>
+            )}
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={closeActionsModal}>
+              Zamknij
+            </Button>
+          </Modal.Footer>
+        </Modal>
+      )}
     </>
   );
 };

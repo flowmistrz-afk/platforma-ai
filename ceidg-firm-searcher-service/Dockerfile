@@ -1,5 +1,5 @@
-# Użyj oficjalnego obrazu Python w nowszej wersji (np. 3.11)
-FROM python:3.11-slim
+# Użyj oficjalnego obrazu Python
+FROM python:3.9-slim
 
 # Ustaw katalog roboczy
 WORKDIR /app
@@ -13,8 +13,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Skopiuj resztę kodu aplikacji
 COPY . .
 
-# --- KLUCZOWA ZMIANA: Ustaw zmienną środowiskową, aby wymusić użycie Vertex AI ---
-ENV GOOGLE_GENAI_USE_VERTEXAI=TRUE
-
-# Uruchom aplikację używając uvicorn, nasłuchując na porcie 8080
+# Uruchom aplikację używając uvicorn, nasłuchując "na sztywno" na porcie 8080
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

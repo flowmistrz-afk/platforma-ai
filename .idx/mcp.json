@@ -1,0 +1,36 @@
+{
+  "mcpServers": {
+    "firebase": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "firebase-tools@latest",
+        "experimental:mcp"
+      ]
+    },
+    "frontend": {
+      "command": "npm",
+      "args": [
+        "start"
+      ],
+      "cwd": ".",
+      "port": 3000
+    },
+    "orchestrator": {
+      "command": "python",
+      "args": [
+        "main.py"
+      ],
+      "cwd": "agent-pro-max-service",
+      "port": 8080
+    },
+    "puppeteer": {
+      "command": "node",
+      "args": [
+        "index.js"
+      ],
+      "cwd": "puppeteer-service",
+      "port": 8081
+    }
+  }
+}

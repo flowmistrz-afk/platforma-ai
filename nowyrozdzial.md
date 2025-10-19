@@ -81,4 +81,76 @@ Proces wdrażania naszego pierwszego "pracownika" (`EnricherProMax`) był wybois
 5.  **Otwórz biuro:** W `main.py` skonfiguruj serwer tak, aby obsługiwał tego agenta.
 6.  **Zgłoś do centrali:** Wdróż serwis na Cloud Run jako nową, niezależną usługę (`gcloud run deploy searcher-pro-max-service ...`).
 
-Po stworzeniu wszystkich agentów-pracowników, zbudujemy dla nich menedżera – `AgentProMax` – który będzie do nich "dzwonił" z zadaniami.
+---
+
+## Rozdział 5: Instrukcja Wdrożenia Mikroserwisu na Cloud Run (Podsumowanie Lekcji)
+
+Proces wdrażania naszych pierwszych mikroserwisów (`ceidg-firm-searcher-service` i `agent-pro-max-service`) był pełen wyzwań, ale doprowadził nas do wypracowania niezawodnej procedury. Poniższa instrukcja krok po kroku to esencja naszej wiedzy.
+
+### Krok 1: Przygotowanie Kodu Agenta
+
+Każdy agent musi być kompletną, niezależną aplikacją. Upewnij się, że jego katalog zawiera:
+
+1.  **Kod aplikacji (`main.py`, `app/`):** Pełna logika serwera FastAPI i agenta.
+2.  **Zależności (`requirements.txt`):** Kompletna lista pakietów Pythona.
+3.  **`Dockerfile` (Kluczowy plik!):** Prawidłowo skonfigurowany plik do budowy kontenera.
+
+**Wzorcowy `Dockerfile`:**
+```dockerfile
+# 1. Użyj kompatybilnej wersji Pythona (co najmniej 3.10)
+FROM python:3.11-slim
+
+# 2. Ustaw katalog roboczy
+WORKDIR /app
+
+# 3. Skopiuj i zainstaluj zależności
+COPY requirements.txt requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 4. Skopiuj resztę kodu
+COPY . .
+
+# 5. Uruchom serwer na porcie 8080 (wymagane przez Cloud Run)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+*   **Najczęstszy błąd:** Zbyt stara wersja Pythona, która nie obsługuje wszystkich zależności (np. `a2a-sdk`). Zawsze używaj `3.10` lub nowszej.
+*   **Najczęstszy błąd:** Użycie zmiennej `$PORT` zamiast "na sztywno" wpisanego portu `8080`. Chociaż `$PORT` powinno działać, wpisanie `8080` jest bardziej niezawodne.
+
+### Krok 2: Włączenie Niezbędnych API w Google Cloud
+
+Zanim cokolwiek wdrożysz, upewnij się, że w Twoim projekcie Google Cloud włączone są następujące interfejsy API. **Wystarczy to zrobić tylko raz na projekt.**
+
+*   **Cloud Build API:** [Włącz tutaj](https://console.cloud.google.com/apis/library/cloudbuild.googleapis.com?project=automatyzacja-pesamu)
+*   **Cloud Run API:** [Włącz tutaj](https://console.cloud.google.com/apis/library/run.googleapis.com?project=automatyzacja-pesamu)
+*   **Artifact Registry API:** [Włącz tutaj](https://console.cloud.google.com/apis/library/artifactregistry.googleapis.com?project=automatyzacja-pesamu)
+
+*   **Najczęstszy błąd:** Próba wdrożenia bez włączonych API prowadzi do mylących błędów `PERMISSION_DENIED`.
+
+### Krok 3: Wdrożenie za pomocą jednej komendy `gcloud`
+
+Zapomnij o `docker build`, `docker push` czy `gcloud builds submit`. Używaj jednej, potężnej komendy, która robi wszystko za nas: `gcloud run deploy`.
+
+```bash
+gcloud run deploy [NAZWA_SERWISU] --source [KATALOG_Z_KODEM] --region [REGION] --project [ID_PROJEKTU] --allow-unauthenticated
+```
+
+**Przykład dla naszego "pracownika":**
+```bash
+gcloud run deploy ceidg-firm-searcher-service --source ceidg-firm-searcher-service/ --region europe-west1 --project automatyzacja-pesamu --allow-unauthenticated
+```
+
+*   `--allow-unauthenticated`: Jest kluczowe, aby nasze mikroserwisy mogły się ze sobą swobodnie komunikować.
+
+### Krok 4: Debugowanie (Jeśli coś pójdzie nie tak)
+
+Jeśli wdrożenie się nie uda, **zawsze sprawdzaj logi w Cloud Build**:
+
+[https://console.cloud.google.com/cloud-build/builds?project=automatyzacja-pesamu](https://console.cloud.google.com/cloud-build/builds?project=automatyzacja-pesamu)
+
+Znajdź na liście ostatnią, nieudaną próbę i przeanalizuj błędy. Najczęstsze problemy to:
+*   Błędy w `Dockerfile`.
+*   Brakujące lub niekompatybilne pakiety w `requirements.txt`.
+
+Jeśli wdrożenie się uda, ale serwis nie działa, **sprawdzaj logi w Cloud Run**:
+[https://console.cloud.google.com/run?project=automatyzacja-pesamu](https://console.cloud.google.com/run?project=automatyzacja-pesamu)
+Kliknij na swoją usługę, a następnie przejdź do zakładki "LOGI".

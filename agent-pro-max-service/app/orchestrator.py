@@ -1,3 +1,10 @@
+# Importy
+from typing import List
+import os
+import requests
+import json
+import traceback
+
 from a2a.types import AgentSkill
 from vertexai.preview.reasoning_engines.templates.a2a import create_agent_card
 from google.adk.agents import LlmAgent
@@ -13,148 +20,141 @@ from google.adk.memory.in_memory_memory_service import InMemoryMemoryService
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-# 1. Definicja Umiejętności
-orchestrator_skill = AgentSkill(
-    id='create_execution_plan',
-    name='Create Execution Plan',
-    description='Analyzes the user\'s request and available tools to create an optimal execution pipeline.',
-    tags=['Orchestration', 'Planning', 'Pipeline'],
-    examples=[
-        'User wants to find companies in CEIDG and then enrich their contact information.',
-        'User wants to search Google for construction companies and then filter them by location.',
-    ],
-)
+# Adresy URL Mikroserwisów
+CEIDG_SEARCHER_URL = "https://ceidg-firm-searcher-service-567539916654.europe-west1.run.app"
+CEIDG_DETAILS_URL = "https://ceidg-details-fetcher-service-567539916654.europe-west1.run.app"
 
-# 2. Wizytówka Agenta
+# Definicje Umiejętności
+ceidg_searcher_skill = AgentSkill(id='ceidg_firm_searcher', name='CEIDG Firm Searcher', description='Use this tool to find a list of companies in CEIDG. Input: {"pkd_codes": list, "city": string, "province": string}. Output: A list of firms with "id" and "nazwa".', tags=['CEIDG', 'Search'])
+ceidg_details_fetcher_skill = AgentSkill(id='ceidg_details_fetcher', name='CEIDG Details Fetcher', description='Use this tool to get full contact details for companies. Input: {"firm_ids": list}. Output: A list of firms with full data.', tags=['CEIDG', 'Details'])
+
 agent_card = create_agent_card(
     agent_name='Orchestrator',
     description='The "Brain" agent that plans and orchestrates tasks across other specialized agents.',
-    skills=[orchestrator_skill]
+    skills=[ceidg_searcher_skill, ceidg_details_fetcher_skill]
 )
 
-# 3. "Mózg" Agenta (LLM)
+# Definicja Agenta
 orchestrator_llm_agent = LlmAgent(
-    model='gemini-1.5-pro',
+    model='gemini-2.5-pro',
     name='orchestrator_agent',
     description='A master agent that creates execution plans for other agents.',
-    instruction='''You are a system orchestrator. Your role is to act as a "Brain".
-You will receive a user request in natural language and a list of available tools (other agents with their descriptions).
-Your task is to create an optimal execution plan to fulfill the request.
-The plan should be a JSON object representing a sequence of steps.
-Each step should specify the agent to call and the input to provide.
-For now, just generate the plan. Do not execute it.
+    instruction='''You are a system orchestrator. Based on the user's request and the available tools, create a logical, step-by-step execution plan in JSON format.
 
-Example Input:
-User Request: "Find construction companies in Warsaw on Google, then find their contact details."
-Available Tools:
-- "google_searcher": "Searches Google for a given query."
-- "contact_enricher": "Finds contact details for a given company name."
+**CRITICAL RULES:**
+1. For location parameters like "city", you MUST use Polish names (e.g., "Warszawa").
+2. The value for the "province" parameter MUST be in lowercase Polish (e.g., "mazowieckie").
 
-Example Output (the plan):
+**Example User Request:** "Znajdź firmy budowlane z PKD 41.10.Z w Warszawie i pobierz ich dane kontaktowe."
+
+**Available Tools:**
+- "ceidg_firm_searcher": "Searches CEIDG."
+- "ceidg_details_fetcher": "Fetches details."
+
+**Correct Output (the plan):**
 ```json
 {
   "plan": [
     {
       "step": 1,
-      "agent": "google_searcher",
-      "input": "construction companies in Warsaw"
+      "agent": "ceidg_firm_searcher",
+      "input": {
+        "pkd_codes": ["41.10.Z"],
+        "city": "Warszawa",
+        "province": "mazowieckie"
+      }
     },
     {
       "step": 2,
-      "agent": "contact_enricher",
-      "input": "output from step 1"
+      "agent": "ceidg_details_fetcher",
+      "input": {
+        "firm_ids": "output from step 1"
+      }
     }
   ]
 }
 ```
-''',
+'''
 )
 
-# 4. "Serce" Agenta (Executor)
+# Executor Agenta
 class OrchestratorAgentExecutor(AgentExecutor):
-    """Executor that uses the LlmAgent to create an execution plan."""
-
     def __init__(self, agent: LlmAgent):
         self.agent = agent
         self.runner = None
+        self.tool_urls = {
+            "ceidg_firm_searcher": f"{CEIDG_SEARCHER_URL}/search",
+            "ceidg_details_fetcher": f"{CEIDG_DETAILS_URL}/details",
+        }
 
     def _init_adk(self):
         if not self.runner:
-            self.runner = Runner(
-                app_name=self.agent.name,
-                agent=self.agent,
-                artifact_service=InMemoryArtifactService(),
-                session_service=InMemorySessionService(),
-                memory_service=InMemoryMemoryService(),
-            )
+            self.runner = Runner(app_name=self.agent.name, agent=self.agent, artifact_service=InMemoryArtifactService(), session_service=InMemorySessionService(), memory_service=InMemoryMemoryService())
 
-    async def execute(
-        self,
-        context: RequestContext,
-        event_queue: EventQueue
-    ) -> None:
-        """Main execution logic: generate the plan."""
+    async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         self._init_adk()
-
-        if not context.message:
-            return
-
-        user_id = context.message.metadata.get('user_id') if context.message and context.message.metadata else 'a2a_user'
+        if not context.message: return
+        user_id = 'user'
         updater = TaskUpdater(event_queue, context.task_id, context.context_id)
-        if not context.current_task:
-            await updater.submit()
+        if not context.current_task: await updater.submit()
         await updater.start_work()
-
-        # For now, the user input is the main query.
-        # Later, we will also pass the list of available tools.
+        
         query = context.get_user_input()
-        content = types.Content(role='user', parts=[types.Part(text=query)])
-
+        
+        tools_list = [ceidg_searcher_skill.model_dump_json(), ceidg_details_fetcher_skill.model_dump_json()]
+        tools_prompt = f"Available Tools:\n{json.dumps(tools_list, indent=2)}"
+        
+        full_query = f"User Request: \"{query}\"\n\n{tools_prompt}"
+        content = types.Content(role='user', parts=[types.Part(text=full_query)])
+        
         try:
-            session = await self.runner.session_service.get_session(
-                app_name=self.runner.app_name,
-                user_id=user_id,
-                session_id=context.context_id,
-            ) or await self.runner.session_service.create_session(
-                app_name=self.runner.app_name,
-                user_id=user_id,
-                session_id=context.context_id,
-            )
+            session = await self.runner.session_service.create_session(app_name=self.runner.app_name, user_id=user_id)
+            plan_text = ""
+            async for event in self.runner.run_async(session_id=session.id, user_id=user_id, new_message=content):
+                if event.content and event.content.parts:
+                    plan_text += "".join(part.text for part in event.content.parts if hasattr(part, 'text'))
+            
+            if not plan_text:
+                raise Exception("Agent failed to generate a plan.")
 
-            final_event = None
-            async for event in self.runner.run_async(
-                session_id=session.id,
-                user_id=user_id,
-                new_message=content
-            ):
-                if event.is_final_response():
-                    final_event = event
+            plan_json_str = plan_text.replace("```json", "").replace("```", "").strip()
+            plan_json = json.loads(plan_json_str)
+            await updater.add_artifact([TextPart(text=f"Plan generated: {plan_json}")], name='execution_plan')
 
-            if final_event and final_event.content and final_event.content.parts:
-                response_text = "".join(
-                    part.text for part in final_event.content.parts if hasattr(part, 'text') and part.text
-                )
-                if response_text:
-                    # Return the generated plan as a JSON artifact
-                    await updater.add_artifact(
-                        [TextPart(text=response_text)],
-                        name='execution_plan',
-                    )
-                    await updater.complete()
-                    return
-
-            await updater.update_status(
-                TaskState.failed,
-                message=new_agent_text_message('Agent failed to generate a plan.'),
-                final=True
-            )
-
+            step_outputs = {}
+            for step in plan_json.get("plan", []):
+                agent_name = step.get("agent")
+                agent_input = step.get("input")
+                
+                if not (agent_name and agent_input): continue
+                
+                for key, value in agent_input.items():
+                    if isinstance(value, str) and "output from step" in value:
+                        previous_step_num = int(value.split(" ")[-1])
+                        previous_output = step_outputs.get(previous_step_num)
+                        if agent_name == 'ceidg_details_fetcher' and key == 'firm_ids':
+                             agent_input[key] = [firm.get('id') for firm in previous_output.get('firms', [])]
+                        else:
+                            agent_input[key] = previous_output
+                
+                await updater.add_artifact([TextPart(text=f"Executing Step {step['step']}: Calling {agent_name}")], name=f"step_{step['step']}_status")
+                
+                agent_url = self.tool_urls.get(agent_name)
+                if agent_url:
+                    response = requests.post(agent_url, json=agent_input, timeout=600)
+                    response.raise_for_status()
+                    step_result = response.json()
+                    step_outputs[step['step']] = step_result
+                    await updater.add_artifact([TextPart(text=json.dumps(step_result, indent=2))], name=f"step_{step['step']}_result")
+                else:
+                    raise Exception(f"Tool '{agent_name}' not found.")
+            
+            await updater.complete()
         except Exception as e:
-            await updater.update_status(
-                TaskState.failed,
-                message=new_agent_text_message(f"An error occurred: {str(e)}"),
-                final=True,
-            )
+            print("--- DETAILED ERROR TRACEBACK ---")
+            traceback.print_exc()
+            print("---------------------------------")
+            await updater.update_status(TaskState.failed, message=new_agent_text_message(f"An error occurred: {str(e)}"), final=True)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue):
         raise ServerError(error=UnsupportedOperationError())

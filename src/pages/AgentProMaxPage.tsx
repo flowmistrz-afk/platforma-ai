@@ -19,7 +19,6 @@ interface PkdSection {
 }
 
 const AgentProMaxPage = () => {
-    // --- POPRAWKA: Puste pole query ---
     const [query, setQuery] = useState('');
     const [city, setCity] = useState('');
     const [province, setProvince] = useState('');
@@ -58,7 +57,6 @@ const AgentProMaxPage = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        // --- NOWA WALIDACJA ---
         if (!query.trim()) {
             setError('Proszę wypełnić opis szukanej usługi.');
             return;
@@ -67,25 +65,25 @@ const AgentProMaxPage = () => {
             setError('Proszę wybrać województwo.');
             return;
         }
-        if (dataSources.includes('ceidg') && selectedPkdCodes.length === 0) {
-            setError('Jeśli wybrano źródło CEIDG, musisz wybrać co najmniej jeden szczegółowy kod PKD.');
-            return;
-        }
         
         setIsLoading(true);
         setError(null);
 
-        const fullQuery = `
-            Użytkownik szuka: "${query}" w lokalizacji ${city}, ${province} (promień: ${radius} km).
-            Wybrane kody PKD do przeszukania w CEIDG: ${selectedPkdCodes.join(', ')}.
-            Przeszukaj następujące źródła danych: ${dataSources.join(', ')}.
-        `;
+        // --- POPRAWKA: Wysyłamy obiekt JSON, a nie tekst ---
+        const requestPayload = {
+            query,
+            city,
+            province,
+            radius,
+            selectedPkdSection,
+            selectedPkdCodes
+        };
 
         try {
             const response = await fetch('https://agent-pro-max-service-567539916654.europe-west1.run.app/execute', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: fullQuery })
+                body: JSON.stringify(requestPayload) // Wysyłamy cały obiekt
             });
 
             if (!response.ok) {
@@ -94,7 +92,9 @@ const AgentProMaxPage = () => {
             }
 
             const responseData = await response.json();
-            navigate('/agent-pro-max/results', { state: { query: fullQuery, responseData } });
+            
+            // Do strony wyników przekazujemy to, co wysłaliśmy, oraz to, co otrzymaliśmy
+            navigate('/agent-pro-max/results', { state: { request: requestPayload, responseData } });
 
         } catch (err: any) {
             setError(err.message || 'Nie udało się połączyć z agentem.');
@@ -130,10 +130,14 @@ const AgentProMaxPage = () => {
                 <Card.Body>
                     <Form onSubmit={handleSubmit}>
                         <Form.Group className="mb-3"><Form.Label>Opis szukanej usługi</Form.Label><Form.Control type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="np. producenci okien PCV, firmy transportowe z licencją..." /></Form.Group>
-                        <Row><Col md={4}><Form.Group className="mb-3"><Form.Label>Miasto</Form.Label><Form.Control type="text" value={city} onChange={(e) => setCity(e.target.value)} placeholder="np. Warszawa" /></Form.Group></Col><Col md={4}><Form.Group className="mb-3"><Form.Label>Województwo</Form.Label><Form.Select value={province} onChange={(e) => setProvince(e.target.value)}><option value="">Wybierz województwo...</option>{wojewodztwaData.map(w => (<option key={w} value={w}>{w}</option>))}</Form.Select></Form.Group></Col><Col md={4}><Form.Group className="mb-3"><Form.Label>Promień (km)</Form.Label><Form.Control type="number" value={radius} onChange={(e) => setRadius(parseInt(e.target.value, 10) || 0)} /></Form.Group></Col></Row>
+                        <Row>
+                            <Col md={4}><Form.Group className="mb-3"><Form.Label>Miasto</Form.Label><Form.Control type="text" value={city} onChange={(e) => setCity(e.target.value)} placeholder="np. Warszawa" /></Form.Group></Col>
+                            <Col md={4}><Form.Group className="mb-3"><Form.Label>Województwo</Form.Label><Form.Select value={province} onChange={(e) => setProvince(e.target.value)}><option value="">Wybierz województwo...</option>{wojewodztwaData.map(w => (<option key={w} value={w}>{w}</option>))}</Form.Select></Form.Group></Col>
+                            <Col md={4}><Form.Group className="mb-3"><Form.Label>Promień (km)</Form.Label><Form.Control type="number" value={radius} onChange={(e) => setRadius(parseInt(e.target.value, 10) || 0)} /></Form.Group></Col>
+                        </Row>
 
                         <Form.Group className="mb-3">
-                            <Form.Label>1. Wybierz główną sekcję PKD</Form.Label>
+                            <Form.Label>1. Wybierz główną sekcję PKD (opcjonalne)</Form.Label>
                             <Form.Select value={selectedPkdSection} onChange={e => { setSelectedPkdSection(e.target.value); setSelectedPkdCodes([]); }}>
                                 <option value="">Wybierz sekcję...</option>
                                 {(pkdData as PkdSection[]).map(section => (

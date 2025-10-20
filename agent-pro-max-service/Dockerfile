@@ -16,5 +16,5 @@ COPY . .
 # --- KLUCZOWA ZMIANA: Ustaw zmienną środowiskową, aby wymusić użycie Vertex AI ---
 ENV GOOGLE_GENAI_USE_VERTEXAI=TRUE
 
-# Uruchom aplikację używając uvicorn, nasłuchując na porcie 8080
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Uruchom aplikację używając uvicorn, nasłuchując na porcie zdefiniowanym przez zmienną środowiskową PORT
+CMD exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}

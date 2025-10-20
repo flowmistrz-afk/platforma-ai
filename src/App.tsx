@@ -18,8 +18,9 @@ import AgentsListPage from './pages/AgentsListPage';
 import Agent1RunPage from './pages/Agent1RunPage';
 import Agent1ResultsPage from './pages/Agent1ResultsPage';
 import ProAgentResultsPage from './pages/ProAgentResultsPage';
-import ProAgentPage from './pages/ProAgentPage'; // <-- DODANY IMPORT
+import ProAgentPage from './pages/ProAgentPage';
 import AgentProMaxPage from './pages/AgentProMaxPage';
+import AgentProMaxResultsPage from './pages/AgentProMaxResultsPage'; // <-- NOWY IMPORT
 import AgentV2Runner from './components/agent/AgentV2Runner';
 
 function App() {
@@ -96,7 +97,7 @@ function App() {
               }
             />
             <Route
-              path="/agents/run/pro-agent" // <-- DODANA ŚCIEŻKA
+              path="/agents/run/pro-agent"
               element={
                 <ProtectedRoute roles={['company-admin', 'company-user']}>
                   <ProAgentPage />
@@ -132,6 +133,14 @@ function App() {
               element={
                 <ProtectedRoute roles={['company-admin', 'company-user']}>
                   <AgentProMaxPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agent-pro-max/results" // <-- NOWA ŚCIEŻKA
+              element={
+                <ProtectedRoute roles={['company-admin', 'company-user']}>
+                  <AgentProMaxResultsPage />
                 </ProtectedRoute>
               }
             />

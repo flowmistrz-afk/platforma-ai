@@ -1,7 +1,7 @@
 # Główna biblioteka Agent Development Kit
 google-adk
 
-# Biblioteka do konfiguracji Vertex AI
+# Biblioteka do konfiguracji Vertex AI i komunikacji z API
 google-generativeai
 
 # Serwer webowy i klient HTTP

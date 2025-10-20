@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Container, Card, Spinner, Alert, ListGroup } from 'react-bootstrap';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../services/firebase'; // Upewnij się, że masz poprawną ścieżkę do konfiguracji Firebase
+import { db } from '../services/firebase';
 
-// Definicja typów dla danych z Firestore
+// Rozszerzona definicja typów, zawiera teraz pole na logi
 interface TaskData {
     status: 'processing' | 'completed' | 'failed';
     request?: any;
@@ -14,13 +14,12 @@ interface TaskData {
     };
     error?: string;
     timestamp?: any;
+    progressLog?: string[]; // <- Nowe pole na logi
 }
 
 // Prosty parser do wyciągania danych z odpowiedzi agenta
 const parseAgentResponse = (responseText: string) => {
     try {
-        // To jest bardzo uproszczony parser. W przyszłości można go rozbudować,
-        // jeśli agent będzie zwracał JSON lub bardziej złożone struktury.
         const sections = responseText.split('###').filter(s => s.trim() !== '');
         return sections.map((section, index) => {
             const lines = section.trim().split('\n');
@@ -34,54 +33,73 @@ const parseAgentResponse = (responseText: string) => {
     }
 };
 
-
 const AgentProMaxResultsPage = () => {
     const { taskId } = useParams<{ taskId: string }>();
     const [taskData, setTaskData] = useState<TaskData | null>(null);
-    const [loading, setLoading] = useState(true);
+    const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+
+    const logContainerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (!taskId) {
             setError("Nie znaleziono ID zadania w adresie URL.");
-            setLoading(false);
+            setIsLoading(false);
             return;
         }
 
         const docRef = doc(db, 'tasks', taskId);
 
-        // Ustawienie nasłuchiwania na zmiany w dokumencie (real-time)
         const unsubscribe = onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
                 const data = docSnap.data() as TaskData;
                 setTaskData(data);
                 
-                // Zakończ ładowanie, jeśli status nie jest już 'processing'
                 if (data.status !== 'processing') {
-                    setLoading(false);
+                    setIsLoading(false);
                 }
             } else {
-                setError("Nie znaleziono zadania o podanym ID w bazie danych.");
-                setLoading(false);
+                 // Nie ustawiamy błędu od razu, czekamy na pojawienie się dokumentu
             }
         }, (err) => {
             console.error("Błąd podczas nasłuchiwania na zmiany w zadaniu:", err);
             setError("Wystąpił błąd podczas pobierania danych o zadaniu.");
-            setLoading(false);
+            setIsLoading(false);
         });
 
-        // Funkcja czyszcząca - zakończ nasłuchiwanie, gdy komponent jest odmontowywany
         return () => unsubscribe();
+    }, [taskId]);
 
-    }, [taskId]); // Efekt będzie uruchamiany ponownie, tylko jeśli zmieni się taskId
+    // Efekt do automatycznego scrollowania logów
+    useEffect(() => {
+        if (logContainerRef.current) {
+            logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        }
+    }, [taskData?.progressLog]);
 
-    const renderContent = () => {
-        if (loading || (taskData && taskData.status === 'processing')) {
-            return (
+
+    const renderLogContent = () => {
+        const logs = taskData?.progressLog || [];
+        if (logs.length === 0 && taskData?.status === 'processing') {
+            return <p>Oczekuję na pierwsze logi od agenta...</p>
+        }
+        return (
+            <ListGroup variant="flush" ref={logContainerRef} style={{ maxHeight: '300px', overflowY: 'auto', background: '#f8f9fa', fontFamily: 'monospace', fontSize: '0.8rem' }}>
+                {logs.map((log, index) => (
+                    <ListGroup.Item key={index} className="py-1 px-2 border-0">
+                        {log}
+                    </ListGroup.Item>
+                ))}
+            </ListGroup>
+        );
+    }
+
+    const renderMainContent = () => {
+        if (isLoading && !taskData) {
+             return (
                 <div className="text-center">
                     <Spinner animation="border" role="status" variant="primary" />
-                    <p className="mt-3">Agent jest w trakcie pracy... Proszę czekać.</p>
-                    <p>Możesz bezpiecznie zamknąć tę stronę i wrócić tu później, wyniki zostaną zachowane.</p>
+                    <p className="mt-3">Nawiązuję połączenie i oczekuję na rozpoczęcie zadania...</p>
                 </div>
             );
         }
@@ -117,6 +135,13 @@ const AgentProMaxResultsPage = () => {
                             <pre>{taskData.error || "Brak szczegółów błędu."}</pre>
                         </Alert>
                     );
+                case 'processing':
+                     return (
+                        <div className="text-center">
+                            <Spinner animation="border" role="status" variant="primary" />
+                            <p className="mt-3">Agent jest w trakcie pracy...</p>
+                        </div>
+                    );
                 default:
                     return <Alert variant="warning">Nieznany status zadania.</Alert>;
             }
@@ -129,9 +154,19 @@ const AgentProMaxResultsPage = () => {
         <Container>
             <h1 className="my-4">Wyniki Agenta Pro Max</h1>
             <p>ID Zadania: <strong>{taskId}</strong></p>
+            
+            {/* Nowa sekcja Dziennika Zdarzeń */}
+            <Card className="mb-4">
+                <Card.Header as="h5">Dziennik Zdarzeń Agenta</Card.Header>
+                <Card.Body className="p-0">
+                    {renderLogContent()}
+                </Card.Body>
+            </Card>
+
             <Card>
+                <Card.Header as="h5">Finalny Wynik</Card.Header>
                 <Card.Body>
-                    {renderContent()}
+                    {renderMainContent()}
                 </Card.Body>
             </Card>
         </Container>

@@ -1,125 +1,140 @@
 import React, { useState, useEffect } from 'react';
-import { useLocation, Link, useNavigate } from 'react-router-dom';
-import { Card, Spinner, Alert, Form, Button } from 'react-bootstrap';
+import { useParams } from 'react-router-dom';
+import { Container, Card, Spinner, Alert, ListGroup } from 'react-bootstrap';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../services/firebase'; // Upewnij się, że masz poprawną ścieżkę do konfiguracji Firebase
 
-// Prosty interfejs dla odpowiedzi z naszego nowego API
-interface AgentResponse {
-    session_id: string;
-    response: string;
+// Definicja typów dla danych z Firestore
+interface TaskData {
+    status: 'processing' | 'completed' | 'failed';
+    request?: any;
+    response?: {
+        session_id: string;
+        response: string;
+    };
+    error?: string;
+    timestamp?: any;
 }
 
+// Prosty parser do wyciągania danych z odpowiedzi agenta
+const parseAgentResponse = (responseText: string) => {
+    try {
+        // To jest bardzo uproszczony parser. W przyszłości można go rozbudować,
+        // jeśli agent będzie zwracał JSON lub bardziej złożone struktury.
+        const sections = responseText.split('###').filter(s => s.trim() !== '');
+        return sections.map((section, index) => {
+            const lines = section.trim().split('\n');
+            const name = lines[0].replace('Nazwa Firmy:', '').trim();
+            const details = lines.slice(1).map(line => line.trim());
+            return { id: index, name, details };
+        });
+    } catch (error) {
+        console.error("Błąd parsowania odpowiedzi agenta:", error);
+        return [{ id: 'raw', name: "Odpowiedź agenta", details: [responseText] }];
+    }
+};
+
+
 const AgentProMaxResultsPage = () => {
-    const location = useLocation();
-    const navigate = useNavigate();
-    
-    // Odczytujemy przekazane dane z obiektu 'state'
-    const { query, responseData } = (location.state || {}) as { query: string, responseData: AgentResponse };
-    
-    const [currentQuery, setCurrentQuery] = useState(query || '');
-    const [isLoading, setIsLoading] = useState(false);
+    const { taskId } = useParams<{ taskId: string }>();
+    const [taskData, setTaskData] = useState<TaskData | null>(null);
+    const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        if (!query || !responseData) {
-            // Jeśli ktoś wejdzie na tę stronę bezpośrednio, bez danych, przekieruj
-            navigate('/agent-pro-max');
+        if (!taskId) {
+            setError("Nie znaleziono ID zadania w adresie URL.");
+            setLoading(false);
+            return;
         }
-    }, [query, responseData, navigate]);
 
-    const handleRerun = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setIsLoading(true);
-        setError(null);
+        const docRef = doc(db, 'tasks', taskId);
 
-        try {
-            const response = await fetch('https://agent-pro-max-service-567539916654.europe-west1.run.app/execute', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: currentQuery })
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || 'Wystąpił błąd serwera.');
+        // Ustawienie nasłuchiwania na zmiany w dokumencie (real-time)
+        const unsubscribe = onSnapshot(docRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data() as TaskData;
+                setTaskData(data);
+                
+                // Zakończ ładowanie, jeśli status nie jest już 'processing'
+                if (data.status !== 'processing') {
+                    setLoading(false);
+                }
+            } else {
+                setError("Nie znaleziono zadania o podanym ID w bazie danych.");
+                setLoading(false);
             }
+        }, (err) => {
+            console.error("Błąd podczas nasłuchiwania na zmiany w zadaniu:", err);
+            setError("Wystąpił błąd podczas pobierania danych o zadaniu.");
+            setLoading(false);
+        });
 
-            const newData: AgentResponse = await response.json();
-            
-            // Ponownie ładujemy stronę z nowymi danymi
-            navigate(location.pathname, { state: { query: currentQuery, responseData: newData }, replace: true });
+        // Funkcja czyszcząca - zakończ nasłuchiwanie, gdy komponent jest odmontowywany
+        return () => unsubscribe();
 
-        } catch (err: any) {
-            setError(err.message || 'Nie udało się połączyć z agentem.');
-        } finally {
-            setIsLoading(false);
+    }, [taskId]); // Efekt będzie uruchamiany ponownie, tylko jeśli zmieni się taskId
+
+    const renderContent = () => {
+        if (loading || (taskData && taskData.status === 'processing')) {
+            return (
+                <div className="text-center">
+                    <Spinner animation="border" role="status" variant="primary" />
+                    <p className="mt-3">Agent jest w trakcie pracy... Proszę czekać.</p>
+                    <p>Możesz bezpiecznie zamknąć tę stronę i wrócić tu później, wyniki zostaną zachowane.</p>
+                </div>
+            );
         }
-    };
-    
-    // Prosta funkcja do formatowania odpowiedzi z Markdown
-    const formatResponse = (text: string) => {
-        return text
-            .split('\n\n')
-            .map((paragraph, pIndex) => (
-                <p key={pIndex}>
-                    {paragraph.split('\n').map((line, lIndex) => {
-                        // Podstawowe formatowanie Markdown
-                        if (line.startsWith('**') && line.endsWith('**')) {
-                            return <strong key={lIndex}>{line.substring(2, line.length - 2)}</strong>;
-                        }
-                        if (line.startsWith('* ')) {
-                            return <li key={lIndex}>{line.substring(2)}</li>;
-                        }
-                        return <React.Fragment key={lIndex}>{line}<br /></React.Fragment>;
-                    })}
-                </p>
-            ));
-    };
 
-    if (!responseData) {
-        // Zabezpieczenie przed renderowaniem bez danych
-        return <div className="text-center p-5"><Spinner animation="border" /></div>;
-    }
+        if (error) {
+            return <Alert variant="danger">{error}</Alert>;
+        }
+
+        if (taskData) {
+            switch (taskData.status) {
+                case 'completed':
+                    const parsedResponse = parseAgentResponse(taskData.response?.response || "Brak odpowiedzi.");
+                    return (
+                        <>
+                            <Alert variant="success">Agent zakończył pracę!</Alert>
+                            <ListGroup>
+                                {parsedResponse.map(item => (
+                                    <ListGroup.Item key={item.id}>
+                                        <h5>{item.name}</h5>
+                                        {item.details.map((detail, index) => (
+                                            <p key={index} className="mb-1">{detail}</p>
+                                        ))}
+                                    </ListGroup.Item>
+                                ))}
+                            </ListGroup>
+                        </>
+                    );
+                case 'failed':
+                    return (
+                        <Alert variant="danger">
+                            <h4>Wystąpił błąd podczas przetwarzania</h4>
+                            <p>Niestety, agent nie mógł ukończyć zadania. Szczegóły błędu:</p>
+                            <pre>{taskData.error || "Brak szczegółów błędu."}</pre>
+                        </Alert>
+                    );
+                default:
+                    return <Alert variant="warning">Nieznany status zadania.</Alert>;
+            }
+        }
+
+        return <Alert variant="info">Brak danych do wyświetlenia.</Alert>;
+    };
 
     return (
-        <div>
-            <Link to="/agent-pro-max" className="mb-4 d-inline-block">
-                &larr; Wróć i uruchom nowe zadanie
-            </Link>
-            <h1>Wyniki Pracy Agenta Pro Max</h1>
-            
-            <Card className="mt-4">
-                <Card.Header as="h5">Ponów zapytanie</Card.Header>
+        <Container>
+            <h1 className="my-4">Wyniki Agenta Pro Max</h1>
+            <p>ID Zadania: <strong>{taskId}</strong></p>
+            <Card>
                 <Card.Body>
-                    <Form onSubmit={handleRerun}>
-                        <Form.Group className="mb-3">
-                            <Form.Label>Zapytanie do agenta:</Form.Label>
-                            <Form.Control
-                                as="textarea"
-                                rows={3}
-                                value={currentQuery}
-                                onChange={(e) => setCurrentQuery(e.target.value)}
-                                disabled={isLoading}
-                            />
-                        </Form.Group>
-                        <Button variant="primary" type="submit" disabled={isLoading}>
-                            {isLoading ? <><Spinner as="span" animation="border" size="sm" /> Uruchamiam...</> : 'Uruchom ponownie'}
-                        </Button>
-                    </Form>
+                    {renderContent()}
                 </Card.Body>
             </Card>
-
-            <Card className="mt-4">
-                <Card.Header as="h5">Otrzymana Odpowiedź</Card.Header>
-                <Card.Body>
-                    {error && <Alert variant="danger">{error}</Alert>}
-                    <p><strong>ID Sesji:</strong> <code>{responseData.session_id}</code></p>
-                    <hr />
-                    <div className="response-content">
-                        {formatResponse(responseData.response)}
-                    </div>
-                </Card.Body>
-            </Card>
-        </div>
+        </Container>
     );
 };
 

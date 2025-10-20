@@ -8,3 +8,6 @@ google-generativeai
 fastapi
 uvicorn
 requests
+
+# Dodana biblioteka do integracji z Firestore
+google-cloud-firestore

@@ -5,6 +5,9 @@ import pkdData from '../data/pkd-database.json';
 import wojewodztwaData from '../data/wojewodztwa-database.json';
 import { toast } from 'react-toastify';
 
+// Stała z adresem URL serwisu, aby uniknąć "magicznych stringów"
+const AGENT_SERVICE_URL = 'https://agent-pro-max-service-567539916654.europe-west1.run.app/execute';
+
 type DataSource = "ceidg" | "google";
 
 interface PkdClass {
@@ -69,7 +72,6 @@ const AgentProMaxPage = () => {
         setIsLoading(true);
         setError(null);
 
-        // --- POPRAWKA: Wysyłamy obiekt JSON, a nie tekst ---
         const requestPayload = {
             query,
             city,
@@ -80,24 +82,31 @@ const AgentProMaxPage = () => {
         };
 
         try {
-            const response = await fetch('https://agent-pro-max-service-567539916654.europe-west1.run.app/execute', {
+            const response = await fetch(AGENT_SERVICE_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestPayload) // Wysyłamy cały obiekt
+                body: JSON.stringify(requestPayload)
             });
 
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.detail || 'Wystąpił błąd serwera.');
+                throw new Error(errorData.detail || 'Wystąpił błąd podczas uruchamiania agenta.');
             }
 
             const responseData = await response.json();
-            
-            // Do strony wyników przekazujemy to, co wysłaliśmy, oraz to, co otrzymaliśmy
-            navigate('/agent-pro-max/results', { state: { request: requestPayload, responseData } });
+            const { task_id } = responseData;
+
+            if (task_id) {
+                // Natychmiastowe przekierowanie na stronę wyników z ID zadania
+                toast.success("Agent został pomyślnie uruchomiony!");
+                navigate(`/agent-pro-max/results/${task_id}`);
+            } else {
+                throw new Error('Nie otrzymano ID zadania od serwera.');
+            }
 
         } catch (err: any) {
-            setError(err.message || 'Nie udało się połączyć z agentem.');
+            setError(err.message || 'Nie udało się połączyć z usługą agenta.');
+            toast.error(err.message || 'Wystąpił błąd.');
         } finally {
             setIsLoading(false);
         }

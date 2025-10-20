@@ -20,7 +20,7 @@ import Agent1ResultsPage from './pages/Agent1ResultsPage';
 import ProAgentResultsPage from './pages/ProAgentResultsPage';
 import ProAgentPage from './pages/ProAgentPage';
 import AgentProMaxPage from './pages/AgentProMaxPage';
-import AgentProMaxResultsPage from './pages/AgentProMaxResultsPage'; // <-- NOWY IMPORT
+import AgentProMaxResultsPage from './pages/AgentProMaxResultsPage';
 import AgentV2Runner from './components/agent/AgentV2Runner';
 
 function App() {
@@ -136,8 +136,9 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            {/* --- POPRAWKA: Dodanie :taskId do ścieżki --- */}
             <Route
-              path="/agent-pro-max/results" // <-- NOWA ŚCIEŻKA
+              path="/agent-pro-max/results/:taskId"
               element={
                 <ProtectedRoute roles={['company-admin', 'company-user']}>
                   <AgentProMaxResultsPage />

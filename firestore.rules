@@ -25,10 +25,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // DODANE REGUŁY DLA NOWEGO SYSTEMU
+    // ZMODYFIKOWANE REGUŁY DLA NOWEGO SYSTEMU
     match /tasks/{taskId} {
       allow create: if request.auth != null;
-      allow read, update: if request.auth != null && request.auth.uid == resource.data.ownerId;
+      allow read: if request.auth != null; // Zezwolenie na odczyt dla każdego zalogowanego użytkownika
+      allow update: if request.auth != null && request.auth.uid == resource.data.ownerId; // Reguła 'update' pozostaje bez zmian
     }
 
     // Reguły dla zadań agentów

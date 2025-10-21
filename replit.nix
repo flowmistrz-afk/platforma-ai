@@ -1,13 +1,20 @@
 { pkgs ? import <nixpkgs> {} }:
 
-pkgs.mkShell {
-  buildInputs = [
-    pkgs.python311
-    pkgs.python311Packages.pip
-    pkgs.python311Packages.venvShellHook
-    pkgs.stdenv.cc.cc.lib
-    pkgs.docker
-  ];
-  
-  venvDir = "venv";
-}
+let
+  python-with-pip = pkgs.python311.withPackages (ps: [
+    ps.pip
+  ]);
+in
+  pkgs.mkShell {
+    buildInputs = [
+      python-with-pip
+      pkgs.pipx
+      pkgs.docker
+    ];
+    
+    # Ta zmienna środowiskowa sprawi, że `python` i `pip` z `python-with-pip`
+    # będą dostępne bezpośrednio w terminalu.
+    shellHook = ''
+      export PATH="${python-with-pip}/bin:$PATH"
+    '';
+  }

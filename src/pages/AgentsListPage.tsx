@@ -22,6 +22,12 @@ const AgentsListPage = () => {
       name: 'AgentProMax: Konstruktor Workflow',
       description: 'Twórz i uruchamiaj własne, niestandardowe przepływy pracy agentów AI za pomocą wizualnego edytora.',
       path: '/agent-pro-max'
+    },
+    {
+      id: 'search-building-permits',
+      name: 'Wyszukiwanie pozwoleń na budowę',
+      description: 'Znajdź i przeanalizuj pozwolenia na budowę na podstawie lokalizacji i typu projektu.',
+      path: '/agents/run/search-building-permits'
     }
   ];
 

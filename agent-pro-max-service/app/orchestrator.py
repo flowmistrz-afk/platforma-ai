@@ -16,6 +16,7 @@ os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
 ROZBUDOWAZAPYTANIE_URL = "https://rozbudowazapytanie-service-567539916654.europe-west1.run.app"
 CEIDG_SEARCHER_URL = "https://ceidg-firm-searcher-service-567539916654.europe-west1.run.app"
 CEIDG_DETAILS_URL = "https://ceidg-details-fetcher-service-567539916654.europe-west1.run.app"
+FIRM_NAME_AI_FILTER_URL = "https://firm-name-ai-filter-service-567539916654.europe-west1.run.app"
 
 # Stałe
 APP_NAME = "agent-pro-max-v2"
@@ -38,6 +39,13 @@ def ceidg_firm_searcher(pkd_codes: list, city: str, province: str, radius: int =
     response.raise_for_status()
     return response.json()
 
+def firm_name_ai_filter(query: dict, firm_summaries: list) -> Dict[str, Any]:
+    """Użyj tego narzędzia, aby przefiltrować listę firm za pomocą AI, aby pozostały tylko te najbardziej pasujące do zapytania."""
+    payload = {"query": query, "firmSummaries": firm_summaries}
+    response = requests.post(f"{FIRM_NAME_AI_FILTER_URL}/filter", json=payload, timeout=300)
+    response.raise_for_status()
+    return response.json()
+
 def ceidg_details_fetcher(firm_ids: list) -> Dict[str, Any]:
     """Użyj tego narzędzia, aby pobrać pełne dane kontaktowe dla firm, których ID posiadasz."""
     payload = {"firm_ids": firm_ids}
@@ -50,23 +58,39 @@ orchestrator_agent = Agent(
     name='orchestrator_agent_v2',
     model='gemini-2.5-pro', # Zgodnie z Twoją prośbą
     description='Inteligentny orkiestrator, który planuje i wywołuje inne serwisy w celu odpowiedzi na zapytanie użytkownika.',
-    instruction='''Jesteś systemem orkiestrującym. Twoim zadaniem jest zrozumienie polecenia użytkownika i wywołanie odpowiednich narzędzi w logicznej kolejności. Twoja finalna odpowiedź MUSI być przyjaznym podsumowaniem znalezionych danych.
+    instruction='''Jesteś systemem orkiestrującym. Twoim zadaniem jest zrozumienie polecenia użytkownika i wywołanie odpowiednich narzędzi w logicznej kolejności. Twoja finalna odpowiedź MUSI być szczegółowym raportem z całego procesu.
 
 **LOGIKA DZIAŁANIA KROK PO KROKU:**
 
-1.  **Analiza Zapytania:** Przeanalizuj `userInput` dostarczone przez użytkownika. Zawiera ono kluczowe informacje: `query`, `city`, `province`, `radius` oraz `selectedPkdCodes`.
+1.  **Analiza Zapytania:** Przeanalizuj `userInput`.
 
 2.  **Warunek PKD:**
-    *   **JEŚLI `selectedPkdCodes` jest PUSTE:** Oznacza to, że użytkownik nie wybrał kodów. Twoim pierwszym krokiem **MUSI** być wywołanie narzędzia `rozbudowa_zapytania`. Przekaż do niego `query` użytkownika.
-    *   **JEŚLI `selectedPkdCodes` ZAWIERA KODY:** Pomiń krok z `rozbudowa_zapytania` i przejdź od razu do kroku 3, używając kodów podanych przez użytkownika.
+    *   **JEŚLI `selectedPkdCodes` jest PUSTE:** Wywołaj `rozbudowa_zapytania`.
+    *   **JEŚLI `selectedPkdCodes` ZAWIERA KODY:** Pomiń ten krok.
 
-3.  **Wyszukiwanie w CEIDG:** Użyj narzędzia `ceidg_firm_searcher`. Jako `pkd_codes` podaj kody od użytkownika (jeśli były) LUB kody zwrócone przez narzędzie `rozbudowa_zapytania`. Przekaż również `city`, `province` i `radius` z `userInput`.
+3.  **Wyszukiwanie w CEIDG:** Wywołaj `ceidg_firm_searcher` z odpowiednimi kodami PKD i lokalizacją.
 
-4.  **Pobieranie Szczegółów:** Wynik z `ceidg_firm_searcher` będzie zawierał listę firm z ich ID. Wyciągnij te ID i przekaż je do narzędzia `ceidg_details_fetcher`.
+4.  **Filtrowanie AI:** Wynik z `ceidg_firm_searcher` przekaż do `firm_name_ai_filter`.
 
-5.  **Finalna Odpowiedź:** Po otrzymaniu pełnych danych z `ceidg_details_fetcher`, sformatuj je w czytelną, przyjazną dla użytkownika listę. Dla każdej firmy przedstaw jej nazwę, email, telefon i adres.
+5.  **Pobieranie Szczegółów:** Przefiltrowane ID z poprzedniego kroku przekaż do `ceidg_details_fetcher`.
+
+6.  **Finalny Raport:** Po zakończeniu wszystkich kroków, przygotuj szczegółowe podsumowanie. Twoja odpowiedź MUSI zawierać następujące sekcje w dokładnie tej kolejności:
+
+    **--- KROK 1: WYNIK ROZBUDOWY ZAPYTANIA ---**
+    *(Jeśli narzędzie `rozbudowa_zapytania` było użyte, wylistuj tutaj jego pełny wynik: zidentyfikowaną usługę, słowa kluczowe i kody PKD. Jeśli nie, napisz "Pominięto").*
+
+    **--- KROK 2: WYNIK WYSZUKIWANIA FIRM ---**
+    *Wylistuj tutaj nazwy i ID **wszystkich** firm znalezionych przez `ceidg_firm_searcher`.*
+
+    **--- KROK 3: WYNIK FILTROWANIA AI ---**
+    *Wylistuj nazwy i ID firm, które pozostały po filtracji przez `firm_name_ai_filter`. Podaj również, ile firm zostało odrzuconych.*
+
+    **--- KROK 4: ZEBRANE DANE KONTAKTOWE ---**
+    *Dla każdej firmy z kroku 3, przedstaw jej pełne dane kontaktowe (nazwa, email, telefon, adres) uzyskane z `ceidg_details_fetcher`.*
+
+    Sformatuj każdą sekcję w sposób czytelny i przejrzysty.
 ''',
-    tools=[rozbudowa_zapytania, ceidg_firm_searcher, ceidg_details_fetcher]
+    tools=[rozbudowa_zapytania, ceidg_firm_searcher, firm_name_ai_filter, ceidg_details_fetcher]
 )
 
 # --- Runner (silnik wykonawczy) ---

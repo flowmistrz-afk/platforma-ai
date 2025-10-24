@@ -21,6 +21,7 @@ import ProAgentResultsPage from './pages/ProAgentResultsPage';
 import ProAgentPage from './pages/ProAgentPage';
 import AgentProMaxPage from './pages/AgentProMaxPage';
 import AgentProMaxResultsPage from './pages/AgentProMaxResultsPage';
+import AgentSearchBuildingPermitsRunPage from './pages/AgentSearchBuildingPermitsRunPage';
 import AgentV2Runner from './components/agent/AgentV2Runner';
 
 function App() {
@@ -142,6 +143,14 @@ function App() {
               element={
                 <ProtectedRoute roles={['company-admin', 'company-user']}>
                   <AgentProMaxResultsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agents/run/search-building-permits"
+              element={
+                <ProtectedRoute roles={['company-admin', 'company-user']}>
+                  <AgentSearchBuildingPermitsRunPage />
                 </ProtectedRoute>
               }
             />

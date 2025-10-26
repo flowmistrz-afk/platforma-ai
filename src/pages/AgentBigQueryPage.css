@@ -1,0 +1,69 @@
+.chat-card {
+    height: 75vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.chat-body {
+    /* Ten element rośnie, aby wypełnić dostępną przestrzeń... */
+    flex: 1;
+    /* ...i to ON jest teraz przewijanym kontenerem. */
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+/* .chat-history nie potrzebuje już żadnych specjalnych stylów do pozycjonowania. */
+/* Będzie po prostu naturalnie rósł wewnątrz przewijanego .chat-body. */
+
+.message {
+    margin-bottom: 1rem;
+    padding: 0.75rem 1.25rem;
+    border-radius: 15px;
+    max-width: 85%;
+    word-wrap: break-word;
+    line-height: 1.5;
+    display: inline-block; /* Zapobiega rozciąganiu się na całą szerokość */
+}
+
+.message-container {
+    display: flex;
+    width: 100%;
+    margin-bottom: 0.5rem;
+}
+
+.message-container.user {
+    justify-content: flex-end;
+}
+
+.message-container.model {
+    justify-content: flex-start;
+}
+
+
+.message.user {
+    background-color: #007bff;
+    color: white;
+    border-bottom-right-radius: 2px;
+}
+
+.message.model {
+    background-color: #e9ecef;
+    color: #333;
+    border-bottom-left-radius: 2px;
+}
+
+.message pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    font-family: inherit;
+    font-size: 1rem;
+}
+
+.chat-input-form {
+    display: flex;
+    gap: 0.5rem;
+    padding: 1rem;
+    border-top: 1px solid #dee2e6;
+}

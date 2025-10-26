@@ -23,6 +23,7 @@ import AgentProMaxPage from './pages/AgentProMaxPage';
 import AgentProMaxResultsPage from './pages/AgentProMaxResultsPage';
 import AgentSearchBuildingPermitsRunPage from './pages/AgentSearchBuildingPermitsRunPage';
 import AgentV2Runner from './components/agent/AgentV2Runner';
+import AgentBigQueryPage from './pages/AgentBigQueryPage';
 
 function App() {
   const { userProfile, loading } = useAuth();
@@ -151,6 +152,14 @@ function App() {
               element={
                 <ProtectedRoute roles={['company-admin', 'company-user']}>
                   <AgentSearchBuildingPermitsRunPage />
+                </ProtectedRoute>
+              }
+            />
+             <Route
+              path="/agents/run/bigquery-agent"
+              element={
+                <ProtectedRoute roles={['company-admin', 'company-user']}>
+                  <AgentBigQueryPage />
                 </ProtectedRoute>
               }
             />

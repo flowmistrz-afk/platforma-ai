@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+google-cloud-aiplatform
+google-cloud-bigquery
+pydantic
+python-dateutil
+google-auth

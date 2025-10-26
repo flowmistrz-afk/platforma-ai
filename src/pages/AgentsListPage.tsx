@@ -28,6 +28,12 @@ const AgentsListPage = () => {
       name: 'Wyszukiwanie pozwoleń na budowę',
       description: 'Znajdź i przeanalizuj pozwolenia na budowę na podstawie lokalizacji i typu projektu.',
       path: '/agents/run/search-building-permits'
+    },
+    {
+      id: 'bigquery-agent',
+      name: 'BigQuery Agent',
+      description: 'Porozmawiaj z agentem, aby znaleźć i przeanalizować pozwolenia na budowę w Polsce.',
+      path: '/agents/run/bigquery-agent'
     }
   ];
 

@@ -1,59 +1,23 @@
-# Ignoruj foldery bibliotek Node.js
-node_modules/
-**/node_modules/
+# Dependencies
+node_modules
+.pnp
+.pnp.js
 
-# Ignoruj foldery wirtualnego środowiska Pythona
-venv/
-**/venv/
-*.venv/
-.env/
-.env.local
-*.env.*
+# Testing
+coverage
 
-# Ignoruj pliki cache Pythona
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+# Production
+build
 
-# Ignoruj buildy, disty i skompilowane biblioteki
-build/
-dist/
-lib/
-**/build/
-**/dist/
-**/lib/
-
-# Ignoruj pliki logów i debuga
-*.log
+# Misc
+.DS_Store
+npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-npm-debug.log*
 
-# Ignoruj pliki konfiguracji IDE/editorów
-.vscode/
-.idea/
-*.swp
-*.swo
+# Service account key
+service-account-key.json
 
-# Ignoruj pliki systemowe
-.DS_Store
-Thumbs.db
-
-# Ignoruj pliki tymczasowe
-*.tmp
-*.bak
-*.swp
-*~
-
-# Ignoruj foldery specyficzne dla Puppeteera lub podobnych
-.puppeteer/
-chrome/
-
-# Ignoruj pliki Firebase (jeśli używasz)
-.firebase/
-
-# Ignoruj pliki z kluczami i sekretami
-klucze interfejsu api.txt
-
-# Dodaj tu własne wzorce, jeśli potrzeba
+# Virtual environment
+venv/
+.venv/

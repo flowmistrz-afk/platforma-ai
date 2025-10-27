@@ -1,0 +1,17 @@
+# Główna biblioteka Agent Development Kit
+google-adk==0.1.0
+
+# Biblioteka do obsługi modeli Gemini i Vertex AI, kompatybilna z ADK 0.1.0
+google-generativeai==0.7.0
+
+# Serwer webowy i klient HTTP
+fastapi
+uvicorn
+requests
+
+# Dodane, aby mieć pewność, że wszystkie zależności google_search są spełnione
+google-cloud-aiplatform
+google-api-python-client
+
+# --- NOWA, BRAKUJĄCA ZALEŻNOŚĆ DLA ADK 0.1.0 ---
+deprecated

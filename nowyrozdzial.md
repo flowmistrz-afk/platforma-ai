@@ -133,6 +133,7 @@ Zapomnij o `docker build`, `docker push` czy `gcloud builds submit`. Używaj jed
 ```bash
 gcloud run deploy [NAZWA_SERWISU] --source [KATALOG_Z_KODEM] --region [REGION] --project [ID_PROJEKTU] --allow-unauthenticated
 ```
+gcloud run deploy google-searcher-agent-service --source ./google-searcher-agent-service --platform managed --region europe-west1 --allow-unauthenticated --set-env-vars="PUPPETEER_SERVICE_URL=https://puppeteer-executor-service-567539916654.europe-west1.run.app"
 
 **Przykład dla naszego "pracownika":**
 ```bash

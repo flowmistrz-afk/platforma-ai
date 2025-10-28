@@ -13,7 +13,6 @@ AGENTS_DIR = os.path.dirname(os.path.abspath(__file__))
 # Poprawiono nazwę parametru z 'session_service_uri' na 'session_db_url'
 app = get_fast_api_app(
     agents_dir=AGENTS_DIR,
-    session_db_url="sqlite:///:memory:", 
     allow_origins=["*"],
     web=True,
 )

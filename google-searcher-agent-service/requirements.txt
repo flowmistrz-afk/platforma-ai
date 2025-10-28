@@ -1,5 +1,5 @@
 # Główna biblioteka Agent Development Kit
-google-adk==1.2.1
+google-adk
 
 # Biblioteka do obsługi modeli Gemini i Vertex AI
 google-generativeai

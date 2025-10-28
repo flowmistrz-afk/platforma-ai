@@ -1,9 +1,18 @@
-# Vertex AI and Agent Development Kit
-google-cloud-aiplatform>=1.55.0
-google-generativeai>=0.7.0
+# Główna biblioteka Agent Development Kit
+google-adk==1.2.1
 
-# HTTP client for tools
+# Biblioteka do obsługi modeli Gemini i Vertex AI
+google-generativeai
+
+# Serwer webowy i klient HTTP
+fastapi
+uvicorn
 requests
 
-# Optional, but good practice for managing environment variables
-python-dotenv
+# Zależności dla wbudowanych narzędzi i poprawnego działania ADK
+google-cloud-aiplatform
+google-api-python-client
+deprecated
+
+# Zależność do obsługi formularzy w FastAPI
+python-multipart

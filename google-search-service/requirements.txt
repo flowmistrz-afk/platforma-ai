@@ -1,0 +1,9 @@
+google-adk
+google-generativeai
+fastapi
+uvicorn
+requests
+google-cloud-aiplatform
+google-api-python-client
+deprecated
+python-multipart

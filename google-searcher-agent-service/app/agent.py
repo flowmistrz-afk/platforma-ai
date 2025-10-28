@@ -4,27 +4,14 @@ from google.adk.agents import LlmAgent, Agent
 # Importujemy WYŁĄCZNIE nasze niestandardowe narzędzia
 from .tools import (
     simple_web_fetch,
-    perform_web_search,
     scrape_website_intelligently,
     close_browser_session,
 )
+from .google_search_pubsub_tool import google_search_pubsub_tool
 
 # --- Definicja Agentów-Specjalistów ---
 
-# NOWY Specjalista nr 1: Wyszukiwanie w internecie za pomocą Puppeteera
-web_search_agent = LlmAgent(
-    name="WebSearchAgent",
-    model="gemini-2.5-pro",
-    description="Specjalista od wyszukiwania informacji w internecie. Użyj go, aby znaleźć listę linków i odpowiedzi na ogólne pytania.",
-    instruction="""
-        Twoim zadaniem jest przyjęcie zapytania od użytkownika i wykonanie go za pomocą narzędzia 'perform_web_search'.
-        Następnie przeanalizuj otrzymany uproszczony widok strony z wynikami i zwróć listę 3-5 najbardziej obiecujących,
-        organicznych wyników w formacie JSON jako tablica obiektów: [{"title": "...", "link": "..."}].
-    """,
-    tools=[perform_web_search],
-)
-
-# Specjalista nr 2: Szybkie pobieranie surowej treści HTML
+# Specjalista nr 1: Szybkie pobieranie surowej treści HTML
 web_fetch_agent = LlmAgent(
     name="WebFetchAgent",
     model="gemini-2.5-pro",
@@ -33,7 +20,7 @@ web_fetch_agent = LlmAgent(
     tools=[simple_web_fetch],
 )
 
-# Specjalista nr 3: Zaawansowany, inteligentny scraping
+# Specjalista nr 2: Zaawansowany, inteligentny scraping
 advanced_scraper_agent = LlmAgent(
     name="AdvancedScraperAgent",
     model="gemini-2.5-pro",
@@ -47,6 +34,19 @@ advanced_scraper_agent = LlmAgent(
     tools=[scrape_website_intelligently, close_browser_session],
 )
 
+# Specjalista nr 3: Wyszukiwanie Google przez Pub/Sub
+google_search_pubsub_agent = LlmAgent(
+    name="GoogleSearchPubSubAgent",
+    model="gemini-2.5-pro",
+    description="Specjalista od wyszukiwania informacji w Google za pomocą zewnętrznej usługi poprzez Pub/Sub.",
+    instruction="""
+        Twoim zadaniem jest przyjęcie zapytania od użytkownika i wykonanie go za pomocą narzędzia 'perform_google_search_pubsub'.
+        Narzędzie to zwróci wyniki wyszukiwania Google. Przeanalizuj je i zwróć 3-5 najbardziej obiecujących,
+        organicznych wyników w formacie JSON jako tablica obiektów: [{"title": "...", "link": "..."}].
+    """,
+    tools=[google_search_pubsub_tool],
+)
+
 # --- Definicja "Mózga-Menedżera" ---
 root_agent = LlmAgent(
     name="GoogleSearcherManager",
@@ -57,16 +57,16 @@ root_agent = LlmAgent(
         do jednego, najbardziej odpowiedniego specjalisty za pomocą 'transfer_to_agent'.
 
         Twoi pracownicy:
-        1.  **WebSearchAgent**: Do ogólnego wyszukiwania w internecie i znajdowania linków.
-        2.  **WebFetchAgent**: Do pobrania surowego HTML z konkretnego URL.
-        3.  **AdvancedScraperAgent**: Do inteligentnej analizy i wyciągania konkretnych danych ze strony internetowej.
+        1.  **WebFetchAgent**: Do pobrania surowego HTML z konkretnego URL.
+        2.  **AdvancedScraperAgent**: Do inteligentnej analizy i wyciągania konkretnych danych ze strony internetowej.
+        3.  **GoogleSearchPubSubAgent**: Do wyszukiwania w Google, gdy potrzebne są wyniki z wyszukiwarki Google.
 
         Zawsze deleguj. Nie wykonuj pracy samodzielnie.
     """,
     sub_agents=[
-        web_search_agent,
         web_fetch_agent,
         advanced_scraper_agent,
+        google_search_pubsub_agent,
     ],
 )
 

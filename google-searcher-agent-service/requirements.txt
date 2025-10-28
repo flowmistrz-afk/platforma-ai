@@ -16,3 +16,4 @@ deprecated
 
 # Zależność do obsługi formularzy w FastAPI
 python-multipart
+google-cloud-pubsub

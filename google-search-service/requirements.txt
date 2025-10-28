@@ -7,3 +7,4 @@ google-cloud-aiplatform
 google-api-python-client
 deprecated
 python-multipart
+google-cloud-pubsub

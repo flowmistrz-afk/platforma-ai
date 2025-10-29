@@ -3,6 +3,7 @@ import os
 import json
 import base64
 import asyncio
+import uuid  # ← DODANE: dla Web UI
 
 import uvicorn
 from fastapi import FastAPI, Request, Response, status
@@ -21,7 +22,7 @@ AGENTS_DIR = os.path.dirname(os.path.abspath(__file__))
 # --- Pub/Sub ---
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "automatyzacja-pesamu")
 QUERY_TOPIC_ID = "search-queries"
-HANDOVER_TOPIC_ID = "agent-handover"  # Nowy: dla handover między agentami
+HANDOVER_TOPIC_ID = "agent-handover"
 RESULTS_TOPIC_ID = "search-results"
 
 publisher = pubsub_v1.PublisherClient()
@@ -39,19 +40,50 @@ app = get_fast_api_app(
 @app.post("/pubsub")
 async def pubsub_receiver(request: Request):
     try:
-        envelope = await request.json()
-        if not envelope or "message" not in envelope:
-            return Response(status_code=status.HTTP_400_BAD_REQUEST)
+        raw_body = await request.body()
+        if not raw_body:
+            return Response(status_code=status.HTTP_400_BAD_REQUEST, content="Empty body")
 
-        pubsub_message = envelope["message"]
-        data = base64.b64decode(pubsub_message["data"]).decode("utf-8")
-        message_data = json.loads(data)
+        message_data = None
 
-        correlation_id = message_data.get("correlation_id")
-        if not correlation_id:
-            return Response(status_code=status.HTTP_400_BAD_REQUEST)
+        # Próba 1: Czysty JSON (od Web UI, curl, etc.)
+        try:
+            message_data = json.loads(raw_body.decode("utf-8"))
+            print("Received direct JSON payload")
+        except json.JSONDecodeError:
+            pass  # Nie JSON → spróbuj Pub/Sub
 
-        message_type = message_data.get("type", "user_query")  # user_query | agent_handover
+        # Próba 2: Standardowa koperta Pub/Sub push
+        if message_data is None:
+            try:
+                pubsub_envelope = json.loads(raw_body.decode("utf-8"))
+                if "message" in pubsub_envelope and "data" in pubsub_envelope["message"]:
+                    data_b64 = pubsub_envelope["message"]["data"]
+                    payload = base64.b64decode(data_b64).decode("utf-8")
+                    message_data = json.loads(payload)
+                    print("Received and decoded Pub/Sub push message")
+                else:
+                    raise ValueError("Invalid Pub/Sub envelope format")
+            except Exception as e:
+                print(f"Failed to parse any payload format: {e}")
+                return Response(status_code=status.HTTP_400_BAD_REQUEST, content="Invalid payload format")
+
+        if not message_data:
+            return Response(status_code=status.HTTP_400_BAD_REQUEST, content="Failed to determine message payload")
+
+        # === UNIWERSALNA OBSŁUGA correlation_id (Twoja genialna poprawka) ===
+        if "correlation_id" not in message_data:
+            if message_data.get("query"):
+                message_data["correlation_id"] = f"webui-{uuid.uuid4().hex[:8]}"
+                print(f"[AUTO-ID DEBUG] Generated correlation_id: {message_data['correlation_id']}")
+            else:
+                print(f"IGNORED: Empty payload with no query: {message_data}")
+                return Response(status_code=200, content="Ignored")
+        
+        correlation_id = message_data["correlation_id"]
+        # === KONIEC ===
+
+        message_type = message_data.get("type", "user_query")
         query = message_data.get("query")
         handover_context = message_data.get("handover_context")
 
@@ -65,7 +97,6 @@ async def pubsub_receiver(request: Request):
             session_id=correlation_id
         )
 
-        # --- Handover: załaduj kontekst do state ---
         if message_type == "agent_handover" and handover_context:
             session_service.set_state(correlation_id, {"previous_results": handover_context})
 
@@ -83,7 +114,7 @@ async def pubsub_receiver(request: Request):
             content_text = query
 
         if not content_text:
-            return Response(status_code=status.HTTP_400_BAD_REQUEST)
+            return Response(status_code=status.HTTP_400_BAD_REQUEST, content="Missing query")
 
         content = types.Content(role='user', parts=[types.Part(text=content_text)])
         events = runner.run(user_id="pubsub-user", session_id=correlation_id, new_message=content)
@@ -116,7 +147,7 @@ async def pubsub_receiver(request: Request):
         return Response(status_code=status.HTTP_200_OK)
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"FATAL ERROR in handler: {e}")
         return Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # --- Uruchomienie ---

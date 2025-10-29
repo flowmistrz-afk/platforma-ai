@@ -1,6 +1,7 @@
 google-adk
 google-generativeai
 fastapi
+requests
 uvicorn
 requests
 google-cloud-aiplatform

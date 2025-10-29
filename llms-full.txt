@@ -1,4 +1,4 @@
-4# ADK Python Repository
+4mportuj aktualne pliki z github# ADK Python Repository
 
 
 

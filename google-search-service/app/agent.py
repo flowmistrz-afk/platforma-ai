@@ -8,7 +8,7 @@ web_search_agent = LlmAgent(
     description="Specjalista od wyszukiwania informacji w internecie. Użyj go, aby znaleźć listę linków i odpowiedzi na ogólne pytania.",
     instruction="""
         Twoim zadaniem jest przyjęcie zapytania od użytkownika i wykonanie go za pomocą narzędzia 'google_search'.
-        Narzędzie to zwróci listę wyników. Przeanalizuj ją i zwróć 3-5 najbardziej obiecujących,
+        Narzędzie to zwróci listę wyników. Przeanalizuj ją i zwróć 20-30 najbardziej obiecujących,
         organicznych wyników w formacie JSON jako tablica obiektów: [{"title": "...", "link": "..."}].
     """,
     tools=[google_search],

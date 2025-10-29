@@ -1,11 +1,15 @@
 import os
 import json
-import threading
-import time
+import base64
+import asyncio
 
 import uvicorn
+from fastapi import FastAPI, Request, Response, status
 from google.adk.cli.fast_api import get_fast_api_app
 from google.cloud import pubsub_v1
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.genai import types
 
 from app.agent import root_agent
 
@@ -19,35 +23,64 @@ AGENTS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "automatyzacja-pesamu")
 QUERY_TOPIC_ID = "search-queries"
 RESULTS_TOPIC_ID = "search-results"
-SUBSCRIPTION_ID = "google-search-service-subscription" # Nazwa subskrypcji dla tej usługi
 
 publisher = pubsub_v1.PublisherClient()
-subscriber = pubsub_v1.SubscriberClient()
-
-query_topic_path = publisher.topic_path(PROJECT_ID, QUERY_TOPIC_ID)
 results_topic_path = publisher.topic_path(PROJECT_ID, RESULTS_TOPIC_ID)
-subscription_path = subscriber.subscription_path(PROJECT_ID, SUBSCRIPTION_ID)
 
 # Inicjalizacja agenta
 search_agent = root_agent
 
-def callback(message: pubsub_v1.subscriber.message.Message) -> None:
-    print(f"Received message: {message.data.decode('utf-8')}")
-    
+# --- Użycie wbudowanego generatora aplikacji ADK ---
+app = get_fast_api_app(
+    agents_dir=AGENTS_DIR,
+    allow_origins=["*"],
+    web=True,
+)
+
+@app.post("/pubsub")
+async def pubsub_receiver(request: Request):
     try:
-        message_data = json.loads(message.data.decode('utf-8'))
+        envelope = await request.json()
+        if not envelope:
+            print("No Pub/Sub message received.")
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+        # Sprawdź, czy wiadomość pochodzi z Pub/Sub
+        if "message" not in envelope:
+            print("Invalid Pub/Sub message format.")
+            return Response(status_code=status.HTTP_400_BAD_REQUEST)
+
+        pubsub_message = envelope["message"]
+        data = base64.b64decode(pubsub_message["data"]).decode("utf-8")
+        
+        print(f"Received Pub/Sub message: {data}")
+
+        message_data = json.loads(data)
         query = message_data.get("query")
         correlation_id = message_data.get("correlation_id")
 
         if not query:
             print("Error: Message does not contain a 'query' field.")
-            message.ack()
-            return
+            return Response(status_code=status.HTTP_400_BAD_REQUEST)
 
         print(f"Processing query: {query} with correlation_id: {correlation_id}")
         
-        # Wykonaj wyszukiwanie za pomocą agenta
-        agent_response = search_agent.run(query)
+        # Inicjalizacja Runnera i SessionService dla każdego zapytania
+        session_service = InMemorySessionService()
+        # Używamy correlation_id jako session_id, aby zapewnić unikalność
+        await session_service.create_session(app_name="google-search-service", user_id="pubsub-user", session_id=correlation_id)
+        runner = Runner(agent=search_agent, app_name="google-search-service", session_service=session_service)
+
+        # Wykonaj wyszukiwanie za pomocą agenta za pośrednictwem Runnera
+        content = types.Content(role='user', parts=[types.Part(text=query)])
+        
+        events = runner.run(user_id="pubsub-user", session_id=correlation_id, new_message=content)
+
+        agent_response = ""
+        for event in events:
+            if event.is_final_response():
+                agent_response = event.content.parts[0].text
+                break
         
         # Opublikuj wynik w temacie wyników
         result_payload = {
@@ -57,53 +90,13 @@ def callback(message: pubsub_v1.subscriber.message.Message) -> None:
         publisher.publish(results_topic_path, json.dumps(result_payload).encode("utf-8"))
         print(f"Published result for correlation_id: {correlation_id}")
 
+        return Response(status_code=status.HTTP_200_OK)
+
     except Exception as e:
-        print(f"Error processing message: {e}")
-    finally:
-        message.ack()
-
-def run_pubsub_listener():
-    # Sprawdź, czy subskrypcja istnieje, jeśli nie, utwórz ją
-    try:
-        subscriber.get_subscription(request={"subscription": subscription_path})
-        print(f"Subscription {SUBSCRIPTION_ID} already exists.")
-    except Exception:
-        print(f"Creating subscription {SUBSCRIPTION_ID}...")
-        subscriber.create_subscription(
-            request={
-                "name": subscription_path,
-                "topic": query_topic_path,
-                "ack_deadline_seconds": 10,
-            }
-        )
-        print(f"Subscription {SUBSCRIPTION_ID} created.")
-
-    streaming_pull_future = subscriber.subscribe(subscription_path, callback=callback)
-    print(f"Listening for messages on {subscription_path}\n")
-
-    # Blokuj główny wątek, aby subskrybent działał w tle
-    # W Cloud Run, główny proces musi nasłuchiwać na porcie HTTP
-    # więc ten wątek będzie działał w tle
-    try:
-        streaming_pull_future.result() # Czekaj na zakończenie subskrypcji (np. przez sygnał)
-    except KeyboardInterrupt:
-        streaming_pull_future.cancel()
-        streaming_pull_future.result()
-
-
-# --- Użycie wbudowanego generatora aplikacji ADK ---
-app = get_fast_api_app(
-    agents_dir=AGENTS_DIR,
-    allow_origins=["*"],
-    web=True,
-)
+        print(f"Error processing Pub/Sub message: {e}")
+        return Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # Standardowy kod do uruchomienia serwera, kompatybilny z Cloud Run
 if __name__ == "__main__":
-    # Uruchom subskrybenta Pub/Sub w osobnym wątku
-    pubsub_thread = threading.Thread(target=run_pubsub_listener)
-    pubsub_thread.daemon = True  # Ustaw wątek jako daemon, aby zakończył się z głównym programem
-    pubsub_thread.start()
-
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)

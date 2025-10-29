@@ -16,7 +16,7 @@ RESULTS_TOPIC_ID = "search-results"
 # W środowisku Cloud Run, każda instancja będzie miała swoją subskrypcję
 # Możemy użyć nazwy usługi + unikalnego ID instancji, jeśli to konieczne
 # Na razie użyjemy prostej nazwy, zakładając, że każda instancja będzie miała swoją
-RESULTS_SUBSCRIPTION_ID = "google-searcher-agent-service-results-subscription"
+RESULTS_SUBSCRIPTION_ID = "searcher-agent-results-subscription"
 
 publisher = pubsub_v1.PublisherClient()
 subscriber = pubsub_v1.SubscriberClient()
@@ -46,21 +46,6 @@ def results_callback(message: pubsub_v1.subscriber.message.Message) -> None:
         message.ack()
 
 def start_results_subscriber():
-    # Sprawdź, czy subskrypcja istnieje, jeśli nie, utwórz ją
-    try:
-        subscriber.get_subscription(request={"subscription": results_subscription_path})
-        print(f"Subscription {RESULTS_SUBSCRIPTION_ID} already exists.")
-    except Exception:
-        print(f"Creating subscription {RESULTS_SUBSCRIPTION_ID}...")
-        subscriber.create_subscription(
-            request={
-                "name": results_subscription_path,
-                "topic": results_topic_path,
-                "ack_deadline_seconds": 10,
-            }
-        )
-        print(f"Subscription {RESULTS_SUBSCRIPTION_ID} created.")
-
     streaming_pull_future = subscriber.subscribe(results_subscription_path, callback=results_callback)
     print(f"Listening for results on {results_subscription_path}\n")
 

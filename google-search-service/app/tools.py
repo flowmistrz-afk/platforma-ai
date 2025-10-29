@@ -1,43 +1,50 @@
-# /app/tools.py (WERSJA OSTATECZNA I DZIAŁAJĄCA)
-
+# app/tools.py
 import os
 import json
+import time
 import requests
+import logging
 from urllib.parse import quote
 from google.adk.tools import FunctionTool
 
-def perform_google_search(query: str) -> str:
-    """
-    Wykonuje wyszukiwanie Google poprzez bezpośrednie zapytanie do Google Custom Search API.
-    To jest jedyny niezawodny sposób na zintegrowanie wyszukiwania z hierarchią agentów.
-    """
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def perform_maximum_google_search(query: str) -> str:
     api_key = os.environ.get("SEARCH_API_KEY")
     search_engine_id = os.environ.get("SEARCH_ENGINE_CX")
 
     if not api_key or not search_engine_id:
-        error_msg = "Błąd: Brak SEARCH_API_KEY lub SEARCH_ENGINE_CX w zmiennych środowiskowych."
-        print(error_msg)
+        error_msg = "Błąd konfiguracji: Brak kluczy API (SEARCH_API_KEY, SEARCH_ENGINE_CX)."
+        logging.error(error_msg)
         return json.dumps({"error": error_msg})
 
+    all_results = []
+    num_pages_to_fetch = 10
     encoded_query = quote(query)
-    url = f"https://www.googleapis.com/customsearch/v1?key={api_key}&cx={search_engine_id}&q={encoded_query}"
 
-    try:
-        response = requests.get(url, timeout=20)
-        response.raise_for_status()
-        data = response.json()
-        items = data.get("items", [])
-        results = [
-            {"link": item.get("link"), "title": item.get("title"), "snippet": item.get("snippet")}
-            for item in items
-        ]
-        return json.dumps(results)
-    except requests.exceptions.RequestException as e:
-        error_msg = f"Błąd komunikacji z Google Search API: {e}"
-        print(error_msg)
-        return json.dumps({"error": error_msg})
+    for page in range(num_pages_to_fetch):
+        start_index = 1 + page * 10
+        url = f"https://www.googleapis.com/customsearch/v1?key={api_key}&cx={search_engine_id}&q={encoded_query}&start={start_index}"
 
-# Tworzymy z naszej funkcji narzędzie zrozumiałe dla agenta ADK
-google_search_custom_tool = FunctionTool(
-    func=perform_google_search,
-)
+        try:
+            response = requests.get(url, timeout=20)
+            response.raise_for_status()
+            data = response.json()
+            items = data.get("items", [])
+            if not items:
+                break
+            page_results = [
+                {"link": item.get("link"), "title": item.get("title"), "snippet": item.get("snippet")}
+                for item in items
+            ]
+            all_results.extend(page_results)
+            time.sleep(0.1)
+        except Exception as e:
+            logging.error(f"Błąd na stronie {page + 1}: {e}")
+            break
+
+    logging.info(f"Pobrano {len(all_results)} wyników.")
+    return json.dumps(all_results, ensure_ascii=False)
+
+# Narzędzie ADK
+google_search_custom_tool = FunctionTool(func=perform_maximum_google_search)

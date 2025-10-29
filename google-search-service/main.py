@@ -1,3 +1,4 @@
+# app/main.py
 import os
 import json
 import base64
@@ -13,24 +14,22 @@ from google.genai import types
 
 from app.agent import root_agent
 
-# --- Konfiguracja dla Vertex AI ---
+# --- Konfiguracja ---
 os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "True"
-
-# --- Pobranie ścieżki do naszych agentów ---
 AGENTS_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# --- Konfiguracja Pub/Sub ---
+# --- Pub/Sub ---
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "automatyzacja-pesamu")
 QUERY_TOPIC_ID = "search-queries"
+HANDOVER_TOPIC_ID = "agent-handover"  # Nowy: dla handover między agentami
 RESULTS_TOPIC_ID = "search-results"
 
 publisher = pubsub_v1.PublisherClient()
 results_topic_path = publisher.topic_path(PROJECT_ID, RESULTS_TOPIC_ID)
+handover_topic_path = publisher.topic_path(PROJECT_ID, HANDOVER_TOPIC_ID)
 
-# Inicjalizacja agenta
 search_agent = root_agent
 
-# --- Użycie wbudowanego generatora aplikacji ADK ---
 app = get_fast_api_app(
     agents_dir=AGENTS_DIR,
     allow_origins=["*"],
@@ -41,62 +40,86 @@ app = get_fast_api_app(
 async def pubsub_receiver(request: Request):
     try:
         envelope = await request.json()
-        if not envelope:
-            print("No Pub/Sub message received.")
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-        # Sprawdź, czy wiadomość pochodzi z Pub/Sub
-        if "message" not in envelope:
-            print("Invalid Pub/Sub message format.")
+        if not envelope or "message" not in envelope:
             return Response(status_code=status.HTTP_400_BAD_REQUEST)
 
         pubsub_message = envelope["message"]
         data = base64.b64decode(pubsub_message["data"]).decode("utf-8")
-        
-        print(f"Received Pub/Sub message: {data}")
-
         message_data = json.loads(data)
-        query = message_data.get("query")
-        correlation_id = message_data.get("correlation_id")
 
-        if not query:
-            print("Error: Message does not contain a 'query' field.")
+        correlation_id = message_data.get("correlation_id")
+        if not correlation_id:
             return Response(status_code=status.HTTP_400_BAD_REQUEST)
 
-        print(f"Processing query: {query} with correlation_id: {correlation_id}")
-        
-        # Inicjalizacja Runnera i SessionService dla każdego zapytania
-        session_service = InMemorySessionService()
-        # Używamy correlation_id jako session_id, aby zapewnić unikalność
-        await session_service.create_session(app_name="google-search-service", user_id="pubsub-user", session_id=correlation_id)
-        runner = Runner(agent=search_agent, app_name="google-search-service", session_service=session_service)
+        message_type = message_data.get("type", "user_query")  # user_query | agent_handover
+        query = message_data.get("query")
+        handover_context = message_data.get("handover_context")
 
-        # Wykonaj wyszukiwanie za pomocą agenta za pośrednictwem Runnera
-        content = types.Content(role='user', parts=[types.Part(text=query)])
-        
+        print(f"[{message_type.upper()}] correlation_id: {correlation_id}")
+
+        # --- Sesja i state ---
+        session_service = InMemorySessionService()
+        await session_service.create_session(
+            app_name="google-search-service",
+            user_id="pubsub-user",
+            session_id=correlation_id
+        )
+
+        # --- Handover: załaduj kontekst do state ---
+        if message_type == "agent_handover" and handover_context:
+            session_service.set_state(correlation_id, {"previous_results": handover_context})
+
+        # --- Uruchom agenta ---
+        runner = Runner(
+            agent=search_agent,
+            app_name="google-search-service",
+            session_service=session_service
+        )
+
+        # --- Wiadomość wejściowa ---
+        if message_type == "agent_handover" and handover_context:
+            content_text = handover_context.get("query", query) or query
+        else:
+            content_text = query
+
+        if not content_text:
+            return Response(status_code=status.HTTP_400_BAD_REQUEST)
+
+        content = types.Content(role='user', parts=[types.Part(text=content_text)])
         events = runner.run(user_id="pubsub-user", session_id=correlation_id, new_message=content)
 
+        # --- Zbierz finalną odpowiedź ---
         agent_response = ""
-        for event in events:
+        async for event in events:
             if event.is_final_response():
-                agent_response = event.content.parts[0].text
-                break
-        
-        # Opublikuj wynik w temacie wyników
+                agent_response += event.content.parts[0].text
+
+        if not agent_response.strip():
+            return Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content="No final response")
+
+        # --- Publikuj wynik ---
         result_payload = {
             "correlation_id": correlation_id,
-            "results": agent_response
+            "results": agent_response,
+            "type": "final_result"
         }
-        publisher.publish(results_topic_path, json.dumps(result_payload).encode("utf-8"))
-        print(f"Published result for correlation_id: {correlation_id}")
+
+        if message_type == "agent_handover":
+            next_topic = message_data.get("next_topic", RESULTS_TOPIC_ID)
+            topic_path = publisher.topic_path(PROJECT_ID, next_topic)
+        else:
+            topic_path = results_topic_path
+
+        publisher.publish(topic_path, json.dumps(result_payload).encode("utf-8"))
+        print(f"Published to {topic_path}")
 
         return Response(status_code=status.HTTP_200_OK)
 
     except Exception as e:
-        print(f"Error processing Pub/Sub message: {e}")
+        print(f"Error: {e}")
         return Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-# Standardowy kod do uruchomienia serwera, kompatybilny z Cloud Run
+# --- Uruchomienie ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     uvicorn.run(app, host="0.0.0.0", port=port)

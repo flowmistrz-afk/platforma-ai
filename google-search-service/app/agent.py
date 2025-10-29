@@ -1,67 +1,63 @@
-# /app/agent.py (WERSJA OSTATECZNA I DZIAŁAJĄCA)
-
+# app/agent.py
 from google.adk.agents import LlmAgent
-
-# Importujemy WYŁĄCZNIE nasze niestandardowe narzędzie z pliku tools.py
+from google.adk.tools import AgentTool
 from .tools import google_search_custom_tool
 
-# --- DEFINICJA AGENTÓW-SPECJALISTÓW ---
-
-# Specjalista nr 1: Wyszukiwanie w Google (używa naszego niestandardowego narzędzia API)
+# === SPECJALISTA 1: WYSZUKIWANIE ===
 web_search_specialist = LlmAgent(
     name="WebSearchSpecialist",
     model="gemini-2.5-pro",
-    description="Specjalista od wyszukiwania informacji w internecie za pomocą niestandardowego narzędzia. Zwraca listę wyników w formacie JSON.",
+    description="Wykonuje pełne wyszukiwanie Google i zwraca wynik jako string JSON.",
     instruction="""
-        Twoim zadaniem jest przyjęcie zapytania od użytkownika i wykonanie go za pomocą narzędzia 'perform_google_search'.
-        Narzędzie to zwróci wyniki wyszukiwania jako string w formacie JSON. Przekaż te wyniki w całości, bez modyfikacji, jako swoją odpowiedź.
+        Twoje jedyne zadanie: wywołaj narzędzie `perform_maximum_google_search` z zapytaniem użytkownika.
+        Zwróć WYŁĄCZNIE wynik jako czysty string JSON, bez żadnych dodatkowych słów, wyjaśnień czy formatowania.
     """,
-    tools=[google_search_custom_tool]
+    tools=[google_search_custom_tool],
+    output_key="search_results"  # Zapisuje do state
 )
 
-# Specjalista nr 2: Filtrowanie Wyników (logika ze "starego" agenta)
-link_filter_specialist = LlmAgent(
-    name="LinkFilterSpecialist",
+# === NARZĘDZIE Z AGENTA ===
+web_search_agent_tool = AgentTool(
+    agent=web_search_specialist
+)
+
+# === SPECJALISTA 2: ANALIZA I KLASYFIKACJA ===
+link_analysis_specialist = LlmAgent(
+    name="LinkAnalysisSpecialist",
     model="gemini-2.5-pro",
-    description="Analityk filtrujący listę linków, aby zostawić tylko strony firmowe i portale z ofertami.",
+    description="Analizuje wyniki wyszukiwania z {search_results} i klasyfikuje linki.",
     instruction="""
-        Jesteś analitykiem danych. Otrzymujesz listę wyników wyszukiwania jako string w formacie JSON.
-        Twoim zadaniem jest odfiltrowanie tylko tych linków, które z dużym prawdopodobieństwem są stroną firmy świadczącej usługi lub portalem zbierającym oferty.
-        Zwróć WYŁĄCZNIE przefiltrowaną listę jako string w tym samym formacie JSON, bez żadnych dodatkowych komentarzy.
+        Jesteś ekspertem w analizie danych webowych. Otrzymujesz listę wyników wyszukiwania jako string JSON w zmiennej {search_results}.
+        
+        TWOJE ZADANIE:
+        1. Przeanalizuj każdy element na liście.
+        2. Odrzuć linki, które prowadzą do mediów społecznościowych, portali z ogłoszeniami o pracę, forów i agregatorów newsów.
+        3. Sklasyfikuj pozostałe linki do jednej z dwóch kategorii:
+           - "companyUrls": dla linków będących bezpośrednimi stronami firm.
+           - "portalUrls": dla linków prowadzących do portali z ofertami usług (np. Oferteo, Fixly, OLX Usługi).
+        
+        Zwróć wynik WYŁĄCZNIE jako pojedynczy, czysty string w formacie JSON.
     """,
+    tools=[]  # USUNIĘTO input_key – NIE ISTNIEJE!
 )
 
-# Specjalista nr 3: Klasyfikacja Linków (logika ze "starego" agenta)
-link_classifier_specialist = LlmAgent(
-    name="LinkClassifierSpecialist",
-    model="gemini-2.5-pro",
-    description="Analityk klasyfikujący przefiltrowane linki na strony firmowe i portale.",
-    instruction="""
-        Jesteś inteligentnym analitykiem. Otrzymujesz listę linków jako string w formacie JSON. 
-        Twoim zadaniem jest sklasyfikowanie każdego linku na jedną z dwóch kategorii: "companyUrls" i "portalUrls".
-        Zwróć wynik WYŁĄCZNIE jako string w formacie JSON o strukturze:
-        {"companyUrls": [...], "portalUrls": [...]}
-    """,
-)
-
-
-# --- DEFINICJA AGENTA-ORKIESTRATORA ("MÓZGU") ---
+# === ORKIESTRATOR (root_agent) ===
 root_agent = LlmAgent(
-    name="SequentialSearchOrchestrator",
+    name="SmartSearchOrchestrator",
     model="gemini-2.5-pro",
-    description="Główny menedżer, który zarządza wieloetapowym procesem: wyszukiwania, filtrowania i klasyfikacji.",
+    description="Zarządza dwuetapowym procesem wyszukiwania i analizy.",
     instruction="""
-        Jesteś menedżerem projektu. Wykonaj zadanie w 3 krokach:
-        1. KROK 1: Przekaż zapytanie użytkownika do 'WebSearchSpecialist'.
-        2. KROK 2: Wyniki z kroku 1 przekaż do 'LinkFilterSpecialist'.
-        3. KROK 3: Wyniki z kroku 2 przekaż do 'LinkClassifierSpecialist'.
-        Zwróć wynik z KROKU 3 jako swoją ostateczną odpowiedź.
-    """,
-    sub_agents=[
-        web_search_specialist,
-        link_filter_specialist,
-        link_classifier_specialist,
-    ],
-)
+    Jesteś automatem wykonawczym. Zawsze wykonuj DOKŁADNIE ten proces:
 
-print("Zbudowano ostatecznego agenta z niestandardowym narzędziem wyszukiwania API.")
+    1. **KROK 1: WYSZUKIWANIE**
+       Wywołaj narzędzie `web_search_agent` z oryginalnym zapytaniem użytkownika.
+
+    2. **KROK 2: ANALIZA**
+       Natychmiast po otrzymaniu wyniku z Kroku 1, deleguj zadanie do `LinkAnalysisSpecialist`.
+
+    3. **KROK 3: OSTATECZNA ODPOWIEDŹ**
+       Odpowiedź od `LinkAnalysisSpecialist` to ostateczny wynik. Zwróć go i zakończ pracę.
+    """,
+    tools=[web_search_agent_tool],
+    sub_agents=[link_analysis_specialist]
+)

@@ -1,0 +1,421 @@
+================================================================================
+                 ADK (Agent Development Kit) – INSTRUKCJA DLA MODELU
+           Budowa Agentów z Pub/Sub, tools, sub_agents, output_key, itd.
+================================================================================
+
+MODEL: Jesteś architektem ADK. Twoim zadaniem jest tworzenie skalowalnych,
+asynchronicznych agentów z użyciem Google Pub/Sub, tools i sub_agents.
+Zawsze stosuj się do poniższych zasad – to best practices Google Cloud.
+
+--------------------------------------------------------------------------------
+1. PODSTAWOWE ZASADY
+--------------------------------------------------------------------------------
+- LlmAgent: Główny typ agenta.
+  - name: Krótka, unikalna nazwa (np. "WebSearchSpecialist")
+  - model: "gemini-2.5-pro" (lub inny)
+  - description: 1-linijkowy opis
+  - instruction: KROK PO KROKU, używaj {zmienna} dla state
+  - tools: [lista] – tylko zewnętrzne operacje
+  - sub_agents: [lista] – tylko wewnętrzne LLM
+  - output_key: Klucz do zapisu wyniku w state (np. "search_results")
+
+- State: Wspólna pamięć sesji. Używaj {nazwa} w instruction.
+- correlation_id: OBOWIĄZKOWY dla Pub/Sub. UUID. Bez niego – błąd.
+- Asynchroniczność: Pub/Sub = zawsze z correlation_id + timeout.
+
+--------------------------------------------------------------------------------
+2. KIEDY UŻYWAĆ tools?
+--------------------------------------------------------------------------------
+UŻYWAJ TYLKO DLA ZEWNĘTRZNYCH OPERACJI:
+- API (HTTP)
+- Pub/Sub
+- Bazy danych
+- Zewnętrzne serwisy (np. google-search-service)
+
+NIE UŻYWAJ dla:
+- Analizy tekstu
+- Klasyfikacji
+- Generowania JSON
+
+PRZYKŁAD DEFINICJI TOOLA:
+
+# FunctionTool – dla prostej funkcji
+def perform_google_search(query: str) -> str:
+    correlation_id = str(uuid.uuid4())
+    payload = {"query": query, "correlation_id": correlation_id}
+    publisher.publish(query_topic, json.dumps(payload).encode())
+    # Czekaj na wynik z Future
+    return future.result(timeout=60)
+
+google_search_tool = FunctionTool(func=perform_google_search)
+
+# AgentTool – dla innego agenta
+external_agent = LlmAgent(...)
+search_tool = AgentTool(agent=external_agent)
+
+W orkiestratorze:
+tools=[google_search_tool]
+
+W instruction:
+"Wywołaj tool `perform_google_search` z zapytaniem użytkownika."
+
+output_key="search_results" → zapisuje wynik do state jako {search_results}
+
+--------------------------------------------------------------------------------
+3. KIEDY UŻYWAĆ sub_agents?
+--------------------------------------------------------------------------------
+UŻYWAJ TYLKO DLA WEWNĘTRZNYCH DECYZJI LLM:
+- Analiza wyników
+- Klasyfikacja linków
+- Generowanie JSON
+- Filtrowanie
+
+NIE UŻYWAJ dla:
+- API
+- Pub/Sub
+- I/O
+
+PRZYKŁAD DEFINICJI SUB_AGENTA:
+
+link_analyzer = LlmAgent(
+    name="LinkAnalyzer",
+    model="gemini-2.5-pro",
+    description="Klasyfikuje linki z {search_results}",
+    instruction="""
+    1. Weź {search_results}
+    2. Odrzuć social media, OLX, fora
+    3. Podziel na companyUrls i portalUrls
+    4. Zwróć JSON
+    """,
+    tools=[],
+    output_key="classified_links"
+)
+
+W orkiestratorze:
+sub_agents=[link_analyzer]
+
+W instruction:
+"Deleguj do `LinkAnalyzer` z {search_results}."
+
+--------------------------------------------------------------------------------
+4. ORKIESTRATOR (root_agent) – JAK BUDOWAĆ?
+--------------------------------------------------------------------------------
+Zawsze: 1 orkiestrator + tools + sub_agents
+
+PRZYKŁAD:
+
+root_agent = LlmAgent(
+    name="SmartOrchestrator",
+    model="gemini-2.5-pro",
+    instruction="""
+    1. KROK 1: Wywołaj tool `google_search_tool` z zapytaniem.
+    2. KROK 2: Deleguj do `LinkAnalyzer` z {search_results}.
+    3. KROK 3: Zwróć {classified_links}.
+    """,
+    tools=[google_search_tool],
+    sub_agents=[link_analyzer]
+)
+
+NIE RÓB:
+- 2 tools dla różnych LLM
+- sub_agent dla Pub/Sub
+- tool dla analizy tekstu
+
+--------------------------------------------------------------------------------
+5. PUB/SUB – OBOWIĄZKOWE ZASADY
+--------------------------------------------------------------------------------
+1. ZAWSZE dodawaj correlation_id:
+   correlation_id = str(uuid.uuid4())
+
+2. Payload:
+   {
+     "query": "...",
+     "correlation_id": "...",
+     "type": "user_query"
+   }
+
+3. W handlerze (FastAPI /pubsub):
+   - Obsługuj direct JSON i Pub/Sub push
+   - Jeśli brak correlation_id → DODAJ automatycznie:
+     if not correlation_id and query:
+         correlation_id = f"webui-{uuid.uuid4().hex[:8]}"
+
+4. Odbieranie wyników:
+   - Używaj subscriber + callback
+   - pending_requests[correlation_id] = Future()
+   - future.result(timeout=60)
+
+5. DLQ: Ustaw w topicach (search-queries, search-results)
+
+--------------------------------------------------------------------------------
+6. OUTPUT_KEY – JAK DZIAŁA?
+--------------------------------------------------------------------------------
+- output_key="nazwa" → zapisuje wynik agenta do state
+- Dostępny jako {nazwa} w kolejnych krokach
+- Używaj w instruction: "Użyj {search_results}"
+
+PRZYKŁAD:
+web_search_agent.output_key = "raw_results"
+analyzer.input_key = None  # używa {raw_results} w instruction
+
+--------------------------------------------------------------------------------
+7. TESTOWANIE I DEBUGOWANIE
+--------------------------------------------------------------------------------
+- Web UI: transfer_to_agent → działa z auto correlation_id
+- curl:
+  curl -X POST /pubsub -d '{"query": "test"}' → OK
+- Logi: Zawsze loguj correlation_id
+- Błędy: 400 = brak correlation_id, 500 = błąd LLM
+
+--------------------------------------------------------------------------------
+8. ZAKAZANE WZORCE
+--------------------------------------------------------------------------------
+- [X] sub_agent dla Pub/Sub
+- [X] tool dla analizy tekstu
+- [X] brak correlation_id
+- [X] mieszanie tools i sub_agents w jednym kroku
+
+--------------------------------------------------------------------------------
+9. PODSUMOWANIE – ZASADA ZŁOTA
+--------------------------------------------------------------------------------
+| Co?               | Gdzie?           | Jak?                    |
+|-------------------|------------------|-------------------------|
+| Zewnętrzne I/O    | tools            | FunctionTool / AgentTool |
+| Wewnętrzne LLM    | sub_agents       | LlmAgent + output_key   |
+| Asynchroniczność  | Pub/Sub          | correlation_id + Future |
+| State             | {nazwa}          | output_key              |
+
+BUDUJ SKALOWALNIE. TESTUJ Z WEB UI. DEPLOYUJ NA CLOUD RUN.
+
+================================================================================
+              KONIEC INSTRUKCJI – STOSUJ DOKŁADNIE KROK PO KROKU
+================================================================================
+
+
+**Plik: `ADK_AGENT_GUIDE.md`**  
+*(Zapisz jako `ADK_AGENT_GUIDE.md` – gotowy do GitHub, Notion, Confluence)*
+
+```markdown
+# ADK (Agent Development Kit) – INSTRUKCJA DLA MODELU  
+**Budowa skalowalnych, asynchronicznych agentów z Pub/Sub, `tools`, `sub_agents`, `output_key`**
+
+> **MODEL: Jesteś architektem ADK. Buduj agentów zgodnie z poniższymi zasadami. To oficjalne best practices Google Cloud.**
+
+---
+
+## 1. PODSTAWOWE ZASADY
+
+| Element | Opis |
+|--------|------|
+| `LlmAgent` | Główny typ agenta |
+| `name` | Krótka, unikalna nazwa (np. `"WebSearchSpecialist"`) |
+| `model` | `"gemini-2.5-pro"` |
+| `description` | 1-linijkowy opis |
+| `instruction` | **KROK PO KROKU**, używaj `{zmienna}` dla state |
+| `tools` | **Zewnętrzne operacje** (API, Pub/Sub) |
+| `sub_agents` | **Wewnętrzne LLM** (analiza, klasyfikacja) |
+| `output_key` | Klucz do zapisu wyniku w **state** (np. `"search_results"`) |
+
+- **State**: Wspólna pamięć sesji → `{nazwa}` w `instruction`
+- **correlation_id**: **OBOWIĄZKOWY** dla Pub/Sub → UUID
+- **Asynchroniczność**: Pub/Sub = `correlation_id` + timeout
+
+---
+
+## 2. KIEDY UŻYWAĆ `tools`?
+
+> **ZEWNĘTRZNE OPERACJE** – API, Pub/Sub, DB, serwisy
+
+**NIE UŻYWAJ** dla analizy tekstu, klasyfikacji, JSON
+
+### Definicja `FunctionTool`
+
+```python
+from google.adk.tools import FunctionTool
+import uuid, json
+
+def perform_google_search(query: str) -> str:
+    correlation_id = str(uuid.uuid4())
+    payload = {"query": query, "correlation_id": correlation_id}
+    publisher.publish(query_topic, json.dumps(payload).encode())
+    return future.result(timeout=60)  # z pending_requests
+
+google_search_tool = FunctionTool(func=perform_google_search)
+```
+
+### Definicja `AgentTool`
+
+```python
+from google.adk.tools import AgentTool
+
+external_agent = LlmAgent(...)  # inny agent
+search_tool = AgentTool(agent=external_agent)
+```
+
+### W orkiestratorze
+
+```python
+tools=[google_search_tool]
+```
+
+```text
+W instruction: "Wywołaj tool `perform_google_search` z zapytaniem użytkownika."
+```
+
+```python
+output_key="search_results"  # → {search_results} w state
+```
+
+---
+
+## 3. KIEDY UŻYWAĆ `sub_agents`?
+
+> **WEWNĘTRZNE DECYZJE LLM** – analiza, klasyfikacja, JSON
+
+**NIE UŻYWAJ** dla API, Pub/Sub, I/O
+
+### Przykład
+
+```python
+link_analyzer = LlmAgent(
+    name="LinkAnalyzer",
+    model="gemini-2.5-pro",
+    description="Klasyfikuje linki z {search_results}",
+    instruction="""
+    1. Weź {search_results}
+    2. Odrzuć social media, OLX, fora
+    3. Podziel na companyUrls i portalUrls
+    4. Zwróć JSON
+    """,
+    tools=[],
+    output_key="classified_links"
+)
+```
+
+### W orkiestratorze
+
+```python
+sub_agents=[link_analyzer]
+```
+
+```text
+W instruction: "Deleguj do `LinkAnalyzer` z {search_results}."
+```
+
+---
+
+## 4. ORKIESTRATOR – JAK BUDOWAĆ?
+
+```python
+root_agent = LlmAgent(
+    name="SmartOrchestrator",
+    model="gemini-2.5-pro",
+    instruction="""
+    1. KROK 1: Wywołaj tool `google_search_tool` z zapytaniem.
+    2. KROK 2: Deleguj do `LinkAnalyzer` z {search_results}.
+    3. KROK 3: Zwróć {classified_links}.
+    """,
+    tools=[google_search_tool],
+    sub_agents=[link_analyzer]
+)
+```
+
+### ZAKAZANE WZORCE
+
+| Zakazane | Dlaczego? |
+|--------|----------|
+| `sub_agent` dla Pub/Sub | Nie obsługuje asynchroniczności |
+| `tool` dla analizy tekstu | To nie funkcja |
+| Brak `correlation_id` | Błąd routingu |
+| Mieszanie `tools` i `sub_agents` w jednym kroku | Niejasna logika |
+
+---
+
+## 5. PUB/SUB – OBOWIĄZKOWE ZASADY
+
+1. **Zawsze dodawaj `correlation_id`**  
+   ```python
+   correlation_id = str(uuid.uuid4())
+   ```
+
+2. **Payload**  
+   ```json
+   {
+     "query": "...",
+     "correlation_id": "...",
+     "type": "user_query"
+   }
+   ```
+
+3. **Handler `/pubsub`**  
+   ```python
+   if "correlation_id" not in message_data and message_data.get("query"):
+       message_data["correlation_id"] = f"webui-{uuid.uuid4().hex[:8]}"
+   ```
+
+4. **Odbieranie wyników**  
+   ```python
+   pending_requests[correlation_id] = Future()
+   result = future.result(timeout=60)
+   ```
+
+5. **DLQ** – ustaw w topicach
+
+---
+
+## 6. `output_key` – JAK DZIAŁA?
+
+| Cecha | Opis |
+|------|------|
+| `output_key="nazwa"` | Zapisuje wynik do state |
+| Dostępny jako `{nazwa}` | W kolejnych krokach |
+| Przykład | `output_key="raw_results"` → `{raw_results}` w `instruction` |
+
+---
+
+## 7. TESTOWANIE I DEBUGOWANIE
+
+| Metoda | Przykład |
+|-------|---------|
+| **Web UI** | `transfer_to_agent` → auto `correlation_id` |
+| **curl** | `curl -d '{"query": "test"}'` → OK |
+| **Logi** | `correlation_id: webui-a1b2c3d4` |
+| **Błędy** | 400 = brak `correlation_id`, 500 = LLM |
+
+---
+
+## 8. ZASADA ZŁOTA
+
+| Co? | Gdzie? | Jak? |
+|-----|--------|------|
+| Zewnętrzne I/O | `tools` | `FunctionTool` / `AgentTool` |
+| Wewnętrzne LLM | `sub_agents` | `LlmAgent` + `output_key` |
+| Asynchroniczność | Pub/Sub | `correlation_id` + `Future` |
+| State | `{nazwa}` | `output_key` |
+
+---
+
+> **BUDUJ SKALOWALNIE. TESTUJ Z WEB UI. DEPLOYUJ NA CLOUD RUN.**
+
+---
+
+**KONIEC INSTRUKCJI – STOSUJ DOKŁADNIE KROK PO KROKU**
+```
+
+---
+
+**Gotowe!**  
+Wklej do GitHub → będzie wyglądać tak:
+
+![image](https://via.placeholder.com/800x400.png?text=ADK+GUIDE+PREVIEW)
+
+---
+
+**Chcesz dodatkowo:**
+
+- Szablon `agent_template.py`?
+- Diagram Mermaid?
+- CI/CD dla Cloud Run?
+
+Daj znać – kończymy to **na 10000%**.
+```

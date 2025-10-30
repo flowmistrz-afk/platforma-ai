@@ -1,7 +1,7 @@
 # app/agent.py
 from google.adk.agents import LlmAgent
 from google.adk.tools import AgentTool
-from .tools import google_search_custom_tool
+from .tools import google_search_custom_tool, scrape_contact_tool  # DODANO scrape_contact_tool
 
 # === SPECJALISTA 1: WYSZUKIWANIE ===
 web_search_specialist = LlmAgent(
@@ -38,14 +38,41 @@ link_analysis_specialist = LlmAgent(
         
         Zwróć wynik WYŁĄCZNIE jako pojedynczy, czysty string w formacie JSON.
     """,
-    tools=[]  # USUNIĘTO input_key – NIE ISTNIEJE!
+    tools=[],
+    output_key="classified_links"  # DODANO: klucz do state
+)
+
+# === SPECJALISTA 3: POZYSKIWANIE KONTAKTU ===
+contact_scraper_agent = LlmAgent(
+    name="ContactScraper",
+    model="gemini-2.5-pro",
+    description="Pozyskuje dane kontaktowe z linków z {classified_links}.",
+    instruction="""
+    Otrzymujesz {classified_links} – JSON z listami `companyUrls` i `portalUrls`.
+
+    TWOJE ZADANIE:
+    1. Dla każdego linku z obu list:
+       - Wywołaj narzędzie `scrape_contact` z linkiem.
+       - Zbierz: email, telefon (jeśli brak → puste pole).
+    2. Zwróć wynik jako JSON:
+       [
+         {
+           "url": "https://...",
+           "email": "...",
+           "phone": "..."
+         }
+       ]
+    3. Jeśli błąd → zostaw puste pola.
+    """,
+    tools=[scrape_contact_tool],
+    output_key="contact_data"  # Zapisuje do state
 )
 
 # === ORKIESTRATOR (root_agent) ===
 root_agent = LlmAgent(
     name="SmartSearchOrchestrator",
     model="gemini-2.5-pro",
-    description="Zarządza dwuetapowym procesem wyszukiwania i analizy.",
+    description="Zarządza trzema krokami: wyszukiwanie → klasyfikacja → kontakt.",
     instruction="""
     Jesteś automatem wykonawczym. Zawsze wykonuj DOKŁADNIE ten proces:
 
@@ -53,11 +80,14 @@ root_agent = LlmAgent(
        Wywołaj narzędzie `web_search_agent` z oryginalnym zapytaniem użytkownika.
 
     2. **KROK 2: ANALIZA**
-       Natychmiast po otrzymaniu wyniku z Kroku 1, deleguj zadanie do `LinkAnalysisSpecialist`.
+       **await** deleguj zadanie do `LinkAnalysisSpecialist`.
 
-    3. **KROK 3: OSTATECZNA ODPOWIEDŹ**
-       Odpowiedź od `LinkAnalysisSpecialist` to ostateczny wynik. Zwróć go i zakończ pracę.
+    3. **KROK 3: POZYSKIWANIE KONTAKTU**
+       **await** deleguj zadanie do `ContactScraper`.
+
+    4. **KROK 4: OSTATECZNA ODPOWIEDŹ**
+       Odpowiedź od `ContactScraper` to ostateczny wynik. Zwróć go i zakończ pracę.
     """,
     tools=[web_search_agent_tool],
-    sub_agents=[link_analysis_specialist]
+    sub_agents=[link_analysis_specialist, contact_scraper_agent]
 )

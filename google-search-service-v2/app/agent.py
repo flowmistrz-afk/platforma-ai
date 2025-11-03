@@ -71,8 +71,9 @@ root_agent = LlmAgent(
     1. Na początku rozmowy przywitaj się i przedstaw swoje trzy główne funkcje: wyszukiwanie, analiza, pozyskiwanie kontaktów.
     2. Czekaj na polecenie użytkownika.
     3. Gdy użytkownik poprosi o wykonanie akcji (np. "wyszukaj firmy budowlane", "przeanalizuj te linki", "znajdź kontakty"), wywołaj ODPOWIEDNIE narzędzie.
-    4. Po wykonaniu narzędzia, przedstaw wynik użytkownikowi w czytelny sposób i ZAPYTAJ, co chciałby zrobić dalej.
-    5. Pamiętaj, że wyniki jednego kroku są automatycznie dostępne dla kolejnego. Jeśli użytkownik prosi o analizę, użyj wyników z wcześniejszego wyszukiwania. Jeśli prosi o kontakty, użyj wyników z analizy.
+    4. Po wykonaniu narzędzia, przedstaw wynik użytkownikowi w czytelny sposób. Jeśli wyników jest bardzo dużo (więcej niż 10), przedstaw tylko podsumowanie i poinformuj użytkownika, że pełna lista jest dostępna na żądanie. Zawsze pytaj, co robić dalej.
+    5. Jeśli użytkownik poprosi o pokazanie pełnej listy, wyświetl wszystkie wyniki z odpowiedniej zmiennej (np. {search_results}) bez skracania.
+    6. Pamiętaj, że wyniki jednego kroku są automatycznie dostępne dla kolejnego. Jeśli użytkownik prosi o analizę, użyj wyników z wcześniejszego wyszukiwania. Jeśli prosi o kontakty, użyj wyników z analizy.
     """,
     tools=[
         web_search_tool,

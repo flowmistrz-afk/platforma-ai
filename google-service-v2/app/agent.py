@@ -24,17 +24,26 @@ web_search_specialist = LlmAgent(
     output_key="search_results"
 )
 
-# SPECJALISTA 2: ANALIZA I KLASYFIKACJAwd
+# SPECJALISTA 2: ANALIZA I KLASYFIKACJA
 link_analysis_specialist = LlmAgent(
     name="LinkAnalysisSpecialist",
     model="gemini-2.5-pro",
     description="Użyj tego narzędzia, aby przeanalizować i sklasyfikować listę linków z wyników wyszukiwania. Wymaga, aby wyszukiwanie zostało wykonane wcześniej.",
     instruction='''
-        Otrzymujesz wyniki wyszukiwania w {search_results}.
-        Przeanalizuj je, odrzuć linki do mediów społecznościowych, portali pracy itp.
-        Sklasyfikuj resztę jako "companyUrls" lub "portalUrls".
-        Zwróć wynik WYŁĄCZNIE jako pojedynczy string JSON.
-    ''', 
+        Twoim zadaniem jest analiza i klasyfikacja linków z wyników wyszukiwania.
+
+        **KROK 1: Sprawdź, czy dostępne są wyniki wyszukiwania.**
+        - Jeśli w kontekście **nie ma** zmiennej `{search_results}`, odpowiedz: "Nie mogę znaleźć żadnych wyników wyszukiwania do analizy. Proszę, najpierw wykonaj wyszukiwanie za pomocą `WebSearchSpecialist`."
+        - Jeśli zmienna `{search_results}` istnieje, przejdź do kroku 2.
+
+        **KROK 2: Przeanalizuj i sklasyfikuj linki.**
+        - Otrzymujesz wyniki wyszukiwania w `{search_results}`.
+        - Przeanalizuj je, odrzuć linki do mediów społecznościowych (Facebook, LinkedIn, Twitter, Instagram), portali pracy (np. Indeed, Pracuj.pl), agregatorów i katalogów ogólnych (np. Wikipedia, Yellow Pages), które nie prowadzą bezpośrednio do strony firmowej.
+        - Resztę linków sklasyfikuj jako:
+            - `companyUrls`: Linki prowadzące bezpośrednio do strony internetowej konkretnej firmy.
+            - `portalUrls`: Linki do portali branżowych lub z ofertami, gdzie mogą znajdować się dane kontaktowe (np. Oferteo, Panorama Firm).
+        - Zwróć wynik WYŁĄCZNIE jako pojedynczy string JSON w formacie: `{ "companyUrls": ["url1", "url2"], "portalUrls": ["url3", "url4"] }`.
+    ''',
     tools=[],
     output_key="classified_links"
 )

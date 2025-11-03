@@ -49,6 +49,10 @@
   top: 220px;
 }
 
+.sidebar-handle.raw-data-handle {
+  top: 430px;
+}
+
 /* The slide-out panel itself */
 .slide-out-panel {
   position: absolute;
@@ -69,6 +73,10 @@
 
 .slide-out-panel.notepad {
   top: 220px; /* Align with its handle */
+}
+
+.slide-out-panel.raw-data {
+  top: 430px; /* Align with its handle */
 }
 
 .slide-out-panel.visible {

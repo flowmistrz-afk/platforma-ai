@@ -51,6 +51,12 @@ const ConversationalSearchPage = () => {
         >
           Notatnik
         </div>
+        <div 
+          className="sidebar-handle raw-data-handle"
+          onMouseEnter={() => setVisiblePanel('rawData')}
+        >
+          Surowe dane
+        </div>
 
         {/* --- Panels (now controlled by JS state) --- */}
         <div className={`slide-out-panel tools ${visiblePanel === 'tools' ? 'visible' : ''}`}>
@@ -76,6 +82,14 @@ const ConversationalSearchPage = () => {
                   rows={15}
                   placeholder="Twoje notatki..."
                 />
+              </Card.Body>
+            </Card>
+        </div>
+        <div className={`slide-out-panel raw-data ${visiblePanel === 'rawData' ? 'visible' : ''}`}>
+            <Card>
+              <Card.Header as="h5">Surowe dane</Card.Header>
+              <Card.Body>
+                <p>Tutaj będą wyświetlane surowe dane.</p>
               </Card.Body>
             </Card>
         </div>

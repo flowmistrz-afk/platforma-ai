@@ -1,0 +1,78 @@
+/* A wrapper for the entire page, sized dynamically with JavaScript. */
+.page-wrapper {
+  display: flex; /* The main flex container */
+  width: 100%;
+  overflow: hidden; /* No scrollbars */
+}
+
+/* The narrow, permanent dock on the left for the handles. This is the hover area for showing/hiding. */
+.sidebar {
+  width: 40px; /* Fixed width for the handles */
+  flex-shrink: 0; /* Prevent it from shrinking */
+  position: relative; /* Positioning context for the handles and panels */
+  z-index: 1001; /* Must be on top */
+}
+
+/* The main content area for the agent */
+.content-column {
+  flex-grow: 1; /* This makes it take up all remaining space */
+  height: 100%;
+}
+
+.agent-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
+
+/* The handles are positioned within the dock */
+.sidebar-handle {
+  width: 100%;
+  padding: 10px 5px;
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-left: none;
+  border-radius: 0 5px 5px 0;
+  cursor: pointer;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  text-align: center;
+  font-weight: bold;
+  position: absolute;
+}
+
+.sidebar-handle.tools-handle {
+  top: 10px;
+}
+
+.sidebar-handle.notepad-handle {
+  top: 220px;
+}
+
+/* The slide-out panel itself */
+.slide-out-panel {
+  position: absolute;
+  top: 10px; /* Default top position */
+  left: 40px; /* Start just outside the dock */
+  width: 350px;
+  background-color: white;
+  box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+  border-radius: 0 8px 8px 0;
+  
+  /* Hidden by default */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-15px);
+  transition: transform 0.25s ease-out, opacity 0.25s ease-out;
+  z-index: 1000; /* Below the handles */
+}
+
+.slide-out-panel.notepad {
+  top: 220px; /* Align with its handle */
+}
+
+.slide-out-panel.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+}

@@ -39,7 +39,7 @@ const AgentsListPage = () => {
       id: 'conversational-search-agent',
       name: 'Agent wyszukiwania konwersacyjny',
       description: 'Porozmawiaj z agentem, aby przeszukać internet lub bazę danych CEIDG.',
-      path: 'https://google-service-v2-agent-567539916654.europe-west1.run.app'
+      path: '/agents/run/conversational-search'
     }
   ];
 

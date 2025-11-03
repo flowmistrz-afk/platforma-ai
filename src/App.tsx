@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Container } from 'react-bootstrap';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -24,9 +24,11 @@ import AgentProMaxResultsPage from './pages/AgentProMaxResultsPage';
 import AgentSearchBuildingPermitsRunPage from './pages/AgentSearchBuildingPermitsRunPage';
 import AgentV2Runner from './components/agent/AgentV2Runner';
 import AgentBigQueryPage from './pages/AgentBigQueryPage';
+import ConversationalSearchPage from './pages/ConversationalSearchPage';
 
 function App() {
   const { userProfile, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -36,11 +38,13 @@ function App() {
     );
   }
 
+  const isConversationalSearchPage = location.pathname === '/agents/run/conversational-search';
+
   return (
     <>
       <Header />
       <main className="py-4">
-        <Container>
+        <Container fluid={isConversationalSearchPage}>
           <Routes>
             <Route path="/login" element={!userProfile ? <LoginPage /> : <Navigate to="/" replace />} />
             <Route path="/register" element={!userProfile ? <RegisterPage /> : <Navigate to="/" replace />} />
@@ -160,6 +164,14 @@ function App() {
               element={
                 <ProtectedRoute roles={['company-admin', 'company-user']}>
                   <AgentBigQueryPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/agents/run/conversational-search"
+              element={
+                <ProtectedRoute roles={['company-admin', 'company-user']}>
+                  <ConversationalSearchPage />
                 </ProtectedRoute>
               }
             />

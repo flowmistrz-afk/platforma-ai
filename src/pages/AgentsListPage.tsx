@@ -34,6 +34,12 @@ const AgentsListPage = () => {
       name: 'BigQuery Agent',
       description: 'Porozmawiaj z agentem, aby znaleźć i przeanalizować pozwolenia na budowę w Polsce.',
       path: '/agents/run/bigquery-agent'
+    },
+    {
+      id: 'conversational-search-agent',
+      name: 'Agent wyszukiwania konwersacyjny',
+      description: 'Porozmawiaj z agentem, aby przeszukać internet lub bazę danych CEIDG.',
+      path: 'https://google-service-v2-agent-567539916654.europe-west1.run.app'
     }
   ];
 

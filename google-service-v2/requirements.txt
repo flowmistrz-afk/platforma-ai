@@ -1,0 +1,17 @@
+# Główna biblioteka Agent Development Kit
+google-adk
+
+# Biblioteka do komunikacji między agentami (A2A)
+a2a-sdk
+
+# Biblioteka do obsługi modeli Gemini i Vertex AI
+google-generativeai
+
+# Serwer webowy i klient HTTP
+fastapi
+uvicorn
+requests
+httpx
+
+# Parser HTML
+beautifulsoup4

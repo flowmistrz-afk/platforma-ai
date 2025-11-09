@@ -8,25 +8,28 @@ import httpx
 import asyncio
 from urllib.parse import quote
 from google.adk.tools import FunctionTool
-import google.generativeai as genai
-from google.generativeai.types import Tool
 from bs4 import BeautifulSoup
 from typing import Dict, List, Optional
 
+# === KONFIGURACJA LOGOWANIA ===
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # === GOOGLE SEARCH ===
-def perform_maximum_google_search(query: str) -> list:
+def perform_maximum_google_search(query: str) -> dict:
     api_key = os.environ.get("SEARCH_API_KEY")
     search_engine_id = os.environ.get("SEARCH_ENGINE_CX")
 
     if not api_key or not search_engine_id:
         error_msg = "Błąd konfiguracji: Brak kluczy API (SEARCH_API_KEY, SEARCH_ENGINE_CX)."
         logging.error(error_msg)
-        return [{"error": error_msg}]
+        return {
+            "raw_search_results": [],
+            "total_found": 0,
+            "error": error_msg
+        }
 
     all_results = []
-    num_pages_to_fetch = 10
+    num_pages_to_fetch = 10  # max 100 wyników
     encoded_query = quote(query)
 
     for page in range(num_pages_to_fetch):
@@ -41,7 +44,7 @@ def perform_maximum_google_search(query: str) -> list:
             if not items:
                 break
             page_results = [
-                {"link": item.get("link"), "title": item.get("title"), "snippet": item.get("snippet")} 
+                {"link": item.get("link"), "title": item.get("title"), "snippet": item.get("snippet")}
                 for item in items
             ]
             all_results.extend(page_results)
@@ -50,9 +53,13 @@ def perform_maximum_google_search(query: str) -> list:
             logging.error(f"Błąd na stronie {page + 1}: {e}")
             break
 
-    logging.info(f"Pobrano {len(all_results)} wyników.")
-    return all_results
+    total = len(all_results)
+    logging.info(f"[Google Search] Pobrano dokładnie {total} linków dla zapytania: '{query}'")
 
+    return {
+        "raw_search_results": all_results,
+        "total_found": total
+    }
 
 # === AI CONTACT SCRAPER ===
 PUPPETEER_SERVICE_URL = os.environ.get("PUPPETEER_SERVICE_URL", "http://localhost:8080/execute")
@@ -73,45 +80,34 @@ def simple_webfetch(url: str, timeout: int = 10, user_agent: Optional[str] = Non
         response = requests.get(url, headers=headers, timeout=timeout)
         response.raise_for_status()
         html = response.text
-        logging.info(f"[simple_webfetch] Pobrany HTML (pierwsze 500 znaków): {html[:500]}")
     except requests.exceptions.RequestException as e:
         logging.error(f"[simple_webfetch] Błąd podczas pobierania {url}: {str(e)}")
         return {"error": [f"Błąd podczas pobierania {url}: {str(e)}"]}
     
     soup = BeautifulSoup(html, 'html.parser')
+    contacts = {"emails": [], "phones": [], "contact_links": [], "addresses": []}
     
-    contacts = {
-        "emails": [],
-        "phones": [],
-        "contact_links": [],
-        "addresses": []
-    }
-    
-    # Ekstrakcja emaili
+    # Email
     email_pattern = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
     for text in soup.find_all(text=True):
-        emails = email_pattern.findall(text)
-        contacts["emails"].extend(emails)
-    
+        contacts["emails"].extend(email_pattern.findall(text))
     for a in soup.find_all('a', href=True):
         if a['href'].startswith('mailto:'):
-            email = a['href'][7:].split('?')[0]  # Usuwamy parametry
+            email = a['href'][7:].split('?')[0]
             if email not in contacts["emails"]:
                 contacts["emails"].append(email)
     
-    # Ekstrakcja numerów telefonów (przykładowe wzorce dla PL i międzynarodowe)
+    # Telefon
     phone_pattern = re.compile(r'(?:(?:\+|00)[1-9]{1,3}[ -]?)?(?:\d{3}[ -]?\d{3}[ -]?\d{3}|\d{2}[ -]?\d{3}[ -]?\d{2}[ -]?\d{2}|\d{9}|\d{11})')
     for text in soup.find_all(text=True):
-        phones = phone_pattern.findall(text)
-        contacts["phones"].extend(phones)
-    
+        contacts["phones"].extend(phone_pattern.findall(text))
     for a in soup.find_all('a', href=True):
         if a['href'].startswith('tel:'):
             phone = a['href'][4:]
             if phone not in contacts["phones"]:
                 contacts["phones"].append(phone)
     
-    # Linki do kontaktu
+    # Linki kontaktowe
     contact_keywords = ['kontakt', 'contact', 'formularz', 'form', 'napisz', 'write', 'email us']
     for a in soup.find_all('a'):
         if a.text.lower() in contact_keywords or any(kw in a.get('href', '').lower() for kw in contact_keywords):
@@ -121,13 +117,11 @@ def simple_webfetch(url: str, timeout: int = 10, user_agent: Optional[str] = Non
             if link not in contacts["contact_links"]:
                 contacts["contact_links"].append(link)
     
-    # Adresy fizyczne (proste wykrywanie ulic, miast, kodów pocztowych)
+    # Adresy
     address_pattern = re.compile(r'\b(?:ul\.|ulica|al\.|aleja|pl\.|plac)?\s*[A-Z][a-z]+\s*\d+[a-z]?(?:/[a-zA-Z0-9]+)?\s*,\s*\d{2}-\d{3}\s*[A-Z][a-z]+')
     for text in soup.find_all(text=True):
-        addresses = address_pattern.findall(text)
-        contacts["addresses"].extend(addresses)
+        contacts["addresses"].extend(address_pattern.findall(text))
     
-    # Usuwanie duplikatów
     for key in contacts:
         contacts[key] = list(set(contacts[key]))
     
@@ -161,7 +155,6 @@ def advanced_scraper(url: str) -> dict:
             return {"url": url, "error": result.get("error", "Puppeteer failed"), "success": False}
 
         html = result["content"]
-        logging.info(f"[advanced_scraper] Pobrany HTML (pierwsze 500 znaków): {html[:500]}")
         
         soup = BeautifulSoup(html, 'html.parser')
     
@@ -234,7 +227,6 @@ def advanced_scraper(url: str) -> dict:
 CEIDG_API_KEY = os.getenv("CEIDG_API_KEY")
 CEIDG_SEARCH_URL = "https://dane.biznes.gov.pl/api/ceidg/v3/firmy"
 CEIDG_DETAILS_URL = "https://dane.biznes.gov.pl/api/ceidg/v3/firma"
-MAX_PAGES_TO_FETCH = 1
 
 async def ceidg_search_firms(pkd_codes: List[str], city: str, province: str) -> List[dict]:
     if not CEIDG_API_KEY:
@@ -309,4 +301,3 @@ simple_webfetch_tool = FunctionTool(func=simple_webfetch)
 advanced_scraper_tool = FunctionTool(func=advanced_scraper)
 ceidg_search_tool = FunctionTool(func=ceidg_search_firms)
 ceidg_details_tool = FunctionTool(func=ceidg_get_firm_details)
-

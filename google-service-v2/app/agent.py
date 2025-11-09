@@ -1,144 +1,206 @@
 from google.adk.agents import LlmAgent
 from google.adk.tools import AgentTool
-from .tools import google_search_custom_tool, simple_webfetch_tool, advanced_scraper_tool, ceidg_search_tool, ceidg_details_tool
+from .tools import (
+    google_search_custom_tool,
+    simple_webfetch_tool,
+    advanced_scraper_tool,
+    ceidg_search_tool,
+    ceidg_details_tool
+)
 import json
 
-# Wczytaj dane PKD z pliku
-with open("app/pkd-database.json", "r") as f:
+# Wczytaj dane PKD
+with open("app/pkd-database.json", "r", encoding="utf-8") as f:
     pkd_data = json.load(f)
 
-# === DEFINICJE SPECJALISTÓW (NASZE PRZYSZŁE NARZĘDZIA) ===
-
-# SPECJALISTA 1: WYSZUKIWANIE W INTERNECIE
+# =============================================
+# === SPECJALISTA 1: GOOGLE SEARCH ===
+# =============================================
 web_search_specialist = LlmAgent(
     name="WebSearchSpecialist",
     model="gemini-2.5-pro",
-    description="Użyj tego narzędzia, aby przeszukać internet w poszukiwaniu informacji na zadany temat.",
+    description="Przeszukuje Google i zwraca WSZYSTKIE wyniki.",
     instruction='''
-        Twoje jedyne zadanie: wywołaj narzędzie `perform_maximum_google_search` z zapytaniem użytkownika.
-        Zaloguj, że wywołujesz to narzędzie.
-        Wynik (wszystkie znalezione linki) zostanie automatycznie zapisany w stanie sesji.
-        Zaloguj znalezione linki.
-    ''', 
+        Twoje zadanie:
+        1. Wywołaj `perform_maximum_google_search` z zapytaniem użytkownika.
+        2. Zaloguj: "Wywołuję wyszukiwanie...".
+        3. **NIE FILTRUJ, NIE PODSUMOWUJ**.
+        4. Zwróć **CAŁY wynik narzędzia** jako **jeden JSON**.
+
+        **FORMAT (DOKŁADNIE TAK):**
+        ```json
+        {
+          "raw_search_results": [
+            {"link": "https://...", "title": "...", "snippet": "..."},
+            ...
+          ],
+          "total_found": 73
+        }
+Użyj dokładnej liczby z wyniku narzędzia. Bez komentarzy.
+''',
     tools=[google_search_custom_tool],
     output_key="search_results"
 )
-
-# SPECJALISTA 2: ANALIZA I KLASYFIKACJA
+# =============================================
+# === SPECJALISTA 2: ANALIZA LINKÓW ===
+# =============================================
 link_analysis_specialist = LlmAgent(
     name="LinkAnalysisSpecialist",
     model="gemini-2.5-pro",
-    description="Użyj tego narzędzia, aby przeanalizować i sklasyfikować listę linków z wyników wyszukiwania. Wymaga, aby wyszukiwanie zostało wykonane wcześniej.",
+    description="Klasyfikuje linki z wyników wyszukiwania.",
     instruction='''
-        Twoim zadaniem jest analiza i klasyfikacja linków z wyników wyszukiwania.
+Sprawdź kontekst sesji:
 
-        **KROK 1: Sprawdź, czy dostępne są wyniki wyszukiwania.**
-        - Jeśli w kontekście **nie ma** zmiennej `{search_results}`, odpowiedz: "Nie mogę znaleźć żadnych wyników wyszukiwania do analizy. Proszę, najpierw wykonaj wyszukiwanie za pomocą `WebSearchSpecialist`."
-        - Jeśli zmienna `{search_results}` istnieje, przejdź do kroku 2.
+Jeśli nie ma klucza search_results → odpowiedz:
+"Brak wyników. Najpierw użyj WebSearchSpecialist."
 
-        **KROK 2: Przeanalizuj i sklasyfikuj linki.**
-        - Otrzymujesz wyniki wyszukiwania w `{search_results}`.
-        - Przeanalizuj je, odrzuć linki do mediów społecznościowych (Facebook, LinkedIn, Twitter, Instagram), portali pracy (np. Indeed, Pracuj.pl), agregatorów i katalogów ogólnych (np. Wikipedia, Yellow Pages), które nie prowadzą bezpośrednio do strony firmowej.
-        - Resztę linków sklasyfikuj jako:
-            - `companyUrls`: Linki prowadzące bezpośrednio do strony internetowej konkretnej firmy.
-            - `portalUrls`: Linki do portali branżowych lub z ofertami, gdzie mogą znajdować się dane kontaktowe (np. Oferteo, Panorama Firm).
-        - Zwróć wynik WYŁĄCZNIE jako pojedynczy string JSON w formacie: `{ "companyUrls": ["url1", "url2"], "portalUrls": ["url3", "url4"] }`.
-    ''',
+Jeśli dane istnieją:
+
+Weź raw_search_results.
+Odrzuć:
+
+social media (Facebook, LinkedIn, Twitter, Instagram)
+portale pracy (Indeed, Pracuj.pl)
+katalogi (Wikipedia, Yellow Pages)
+
+
+Sklasyfikuj:
+
+companyUrls: strony firm
+portalUrls: portale branżowe (Oferteo, Panorama Firm)
+
+
+
+Zwróć TYLKO JSON:
+json{ "companyUrls": ["url1"], "portalUrls": ["url2"] }
+''',
     tools=[],
     output_key="classified_links"
 )
-
-# SPECJALISTA 3: POZYSKIWANIE KONTAKTU
+# =============================================
+# === SPECJALISTA 3: KONTAKTY ===
+# =============================================
 contact_scraper_agent = LlmAgent(
     name="ContactScraper",
     model="gemini-2.5-pro",
-    description="Użyj tego narzędzia, aby pobrać dane kontaktowe (e-mail, telefon) ze sklasyfikowanych linków. Wymaga, aby analiza linków została wykonana wcześniej.",
+    description="Pobiera dane kontaktowe z linków firm, które zostały znalezione przez WebSearchSpecialist.",
     instruction='''
-    Otrzymujesz {classified_links} – JSON z listami `companyUrls` i `portalUrls`.
-    Twoim zadaniem jest zebranie jak największej ilości danych kontaktowych (e-maile, telefony, adresy) dla każdej firmy z `companyUrls`.
+Sprawdź kontekst:
 
-    Loguj swoje postępy, aby użytkownik mógł śledzić Twoje działania.
+Jeśli nie ma classified_links → odpowiedz:
+"Brak linków. Najpierw użyj WebSearchSpecialist."
 
-    Dla każdego linku z `companyUrls` wykonaj następujące kroki:
-    1. Loguj, którą firmę przetwarzasz.
-    2. Stwórz pustą listę, w której będziesz przechowywać wszystkie znalezione dane dla danej firmy.
-    3. Wywołaj `simple_webfetch` na głównym linku firmy. Loguj, że wywołujesz to narzędzie.
-    4. Jeśli `simple_webfetch` zwróci dane, dodaj je do swojej listy i zaloguj znalezione dane. Jeśli zwróci również `contact_links`, dla każdego z tych linków kontaktowych **ponownie wywołaj `simple_webfetch`**, logując każdy krok, i również dodaj wyniki do swojej listy.
-    5. Jeśli pierwsze wywołanie `simple_webfetch` (na głównym linku) zwróci błąd lub nie znajdzie żadnych danych, zaloguj ten fakt i zamiast tego użyj narzędzia `advanced_scraper` na tym głównym linku. Loguj wywołanie `advanced_scraper` i dodaj wynik do swojej listy.
-    6. Po przejściu przez wszystkie firmy, zbierz wszystkie dane ze wszystkich list w jeden zagregowany wynik.
-    7. Zaloguj ostateczny, zagregowany wynik.
-    8. Zwróć ostateczną, zagregowaną listę jako pojedynczy string JSON.
-    ''', 
+Jeśli dane istnieją:
+
+Dla każdego companyUrls:
+
+Loguj: "Przetwarzam: [url]"
+Użyj simple_webfetch
+Jeśli contact_links → przetwórz je
+Jeśli błąd → użyj advanced_scraper
+
+
+Zbierz wszystko
+Zwróć jako JSON string
+''',
     tools=[simple_webfetch_tool, advanced_scraper_tool]
 )
 
-# SPECJALISTA 4: WYSZUKIWANIE W CEIDG
+# =============================================
+# === NOWY SPECJALISTA: BEZPOŚREDNIE ZDOBYWANIE KONTAKTÓW ===
+# =============================================
+direct_contact_scraper_agent = LlmAgent(
+    name="DirectContactScraper",
+    model="gemini-2.5-pro",
+    description="Pobiera dane kontaktowe z podanego przez użytkownika linku.",
+    instruction='''
+Sprawdź, czy w wiadomości od użytkownika jest link (zawiera "http" lub "https").
+
+Jeśli tak:
+  Użyj tego linku.
+  Loguj: "Przetwarzam: [url]"
+  Użyj simple_webfetch
+  Jeśli wystąpi błąd lub nie znajdziesz wystarczających danych → użyj advanced_scraper
+  Zbierz wszystkie znalezione dane (e-maile, telefony, linki kontaktowe, adresy).
+  Zwróć jako czytelny tekst.
+
+Jeśli nie ma linku, odpowiedz:
+"Proszę podać link do strony, z której mam pobrać dane kontaktowe."
+''',
+    tools=[simple_webfetch_tool, advanced_scraper_tool]
+)
+
+# =============================================
+# === SPECJALISTA 4: CEIDG ===
+# =============================================
 ceidg_search_specialist = LlmAgent(
     name="CeidgSearchSpecialist",
     model="gemini-2.5-pro",
-    description="Użyj tego narzędzia, aby przeszukać bazę danych CEIDG w poszukiwaniu firm.",
+    description="Szuka firm w CEIDG.",
     instruction=f'''
-    Twoim zadaniem jest przeprowadzenie kompleksowego wyszukiwania i analizy firm w bazie CEIDG.
+Dostępne PKD:
+{json.dumps(pkd_data)}
+KROKI:
 
-    Oto lista dostępnych kodów PKD:
-    {json.dumps(pkd_data)}
-
-    KROKI:
-    1. **Analiza zapytania:** Przeanalizuj zapytanie użytkownika, aby wyodrębnić słowa kluczowe, miasto i województwo.
-       Jeśli brakuje miasta, województwa lub słów kluczowych dla PKD, poproś użytkownika o te informacje.
-    2. **Wyszukiwanie kodów PKD:** Na podstawie słów kluczowych i powyższej listy kodów PKD, znajdź najbardziej pasujące kody PKD.
-    3. **Wyszukiwanie w CEIDG:** Wywołaj narzędzie `ceidg_search_firms` z kodami PKD uzyskanymi w poprzednim kroku, oraz miastem i województwem.
-    4. **Filtrowanie AI:** Na podstawie wyników z `ceidg_search_firms` i oryginalnego zapytania użytkownika, przefiltruj listę firm, aby znaleźć te najbardziej adekwatne. Użyj do tego własnej inteligencji, nie używaj żadnych narzędzi. Zastosuj następujące kryteria:
-        - **Trafność Nazwy:** Nazwa firmy powinna jak najściślej odpowiadać oryginalnemu zapytaniu lub liście słów kluczowych.
-        - **Odrzucanie:** Odrzuć firmy o nazwach generycznych, niepasujących lub wielobranżowych, jeśli nie wskazują jasno na szukaną specjalizację.
-        Zwróć listę przefiltrowanych firm.
-    5. **Pobieranie szczegółów:** Wywołaj narzędzie `ceidg_get_firm_details` dla przefiltrowanych firm.
-    6. **Zapisz wyniki:** Zapisz ostateczną listę firm ze szczegółami w kluczu `ceidg_results`.
-    ''', 
+Wyodrębnij: słowa kluczowe, miasto, województwo
+→ Jeśli brakuje → poproś
+Znajdź kody PKD
+Wywołaj ceidg_search_firms
+Przefiltruj po nazwie
+Wywołaj ceidg_get_firm_details
+Zapisz w ceidg_results
+''',
     tools=[ceidg_search_tool, ceidg_details_tool],
     output_key="ceidg_results"
 )
 
-
-# === TWORZENIE NARZĘDZI Z NASZYCH SPECJALISTÓW ===
-
+# =============================================
+# === NARZĘDZIA Z AGENTÓW ===
+# =============================================
 web_search_tool = AgentTool(agent=web_search_specialist)
 link_analysis_tool = AgentTool(agent=link_analysis_specialist)
 contact_scraper_tool = AgentTool(agent=contact_scraper_agent)
+direct_contact_scraper_tool = AgentTool(agent=direct_contact_scraper_agent)
 ceidg_search_agent_tool = AgentTool(agent=ceidg_search_specialist)
-
-
-# === NOWY, INTERAKTYWNY AGENT GŁÓWNY (root_agent) ===
+# =============================================
+# === ROOT AGENT ===
+# =============================================
 root_agent = LlmAgent(
     name="ConversationalSearchAssistant",
     model="gemini-2.5-pro",
-    description="Asystent do interaktywnego badania internetu i bazy danych CEIDG.",
+    description="Główny asystent interaktywny.",
     instruction='''
-    Jesteś interaktywnym asystentem do wyszukiwania i analizy danych. Twoim zadaniem jest prowadzenie rozmowy z użytkownikiem i wykonywanie jego poleceń krok po kroku.
+Witaj! Przedstaw się i zapytaj, co mogę dla Ciebie zrobić.
 
-    Twoje możliwości (narzędzia):
-    1. `WebSearchSpecialist`: Przeszukuje internet.
-    2. `LinkAnalysisSpecialist`: Analizuje i klasyfikuje wyniki wyszukiwania z internetu.
-    3. `ContactScraper`: Pobiera dane kontaktowe ze stron internetowych.
-    4. `CeidgSearchSpecialist`: Przeszukuje bazę danych CEIDG.
+Jeśli użytkownik poda link (zawierający "http" lub "https"), przekaż go do `DirectContactScraper` w celu znalezienia danych kontaktowych.
 
-    SCHEMAT DZIAŁANIA:
-    1. Na początku rozmowy przywitaj się i przedstaw swoje możliwości. Poinformuj użytkownika, że może skorzystać z następujących specjalistów:
-        - `WebSearchSpecialist`: Do przeszukiwania internetu.
-        - `LinkAnalysisSpecialist`: Do analizy i klasyfikacji linków.
-        - `ContactScraper`: Do pobierania danych kontaktowych ze stron internetowych.
-        - `CeidgSearchSpecialist`: Do przeszukiwania bazy danych CEIDG.
-        Zapytaj użytkownika, z którego specjalisty chciałby skorzystać.
-    2. Czekaj na polecenie użytkownika.
-    3. Na podstawie wyboru użytkownika, wywołaj odpowiednie narzędzie.
-    4. Po wykonaniu narzędzia, przedstaw wynik użytkownikowi w czytelny sposób i ZAPYTAJ, co chciałby zrobić dalej.
-    5. **WAŻNE**: Jeśli wynikiem jest lista danych kontaktowych z narzędzia `ContactScraper` lub dane z `CeidgSearchSpecialist`, przedstaw **wszystkie** znalezione dane bez podsumowywania czy skracania.
-    6. Pamiętaj, że wyniki jednego kroku są automatycznie dostępne dla kolejnego. Jeśli użytkownik prosi o analizę, użyj wyników z wcześniejszego wyszukiwania. Jeśli prosi o kontakty, użyj wyników z analizy.
-    ''', 
+Jeśli użytkownik poprosi o znalezienie firm lub wyszukanie czegoś w Google, użyj `WebSearchSpecialist`.
+
+W innych przypadkach zapytaj, którego specjalisty chcesz użyć:
+
+Specjaliści:
+- `WebSearchSpecialist` – wyszukuje w Google.
+- `LinkAnalysisSpecialist` – klasyfikuje linki z wyników wyszukiwania.
+- `ContactScraper` – pobiera kontakty z linków znalezionych przez wyszukiwarkę.
+- `DirectContactScraper` – pobiera kontakty z bezpośrednio podanego linku.
+- `CeidgSearchSpecialist` – szuka firm w CEIDG.
+
+Po wykonaniu zadania przez specjalistę, przedstaw wyniki w czytelny sposób.
+
+Zawsze zwracaj HTML:
+html<script>
+  window.parent.postMessage({
+    "source": "NAZWA",
+    "data": { "display_text": "...", "raw_data": {...}, "total_results": X }
+  }, 'https://aisp-hub-791a3.web.app');
+</script>
+<div>display_text</div>
+''',
     tools=[
         web_search_tool,
         link_analysis_tool,
         contact_scraper_tool,
+        direct_contact_scraper_tool,
         ceidg_search_agent_tool
     ]
 )

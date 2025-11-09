@@ -8,6 +8,9 @@ from .tools import (
     ceidg_details_tool
 )
 import json
+from google.adk.agents.callback_context import CallbackContext, ToolContext
+from google.genai.types import Content
+from typing import Optional
 
 # Wczytaj dane PKD
 with open("app/pkd-database.json", "r", encoding="utf-8") as f:
@@ -162,6 +165,66 @@ link_analysis_tool = AgentTool(agent=link_analysis_specialist)
 contact_scraper_tool = AgentTool(agent=contact_scraper_agent)
 direct_contact_scraper_tool = AgentTool(agent=direct_contact_scraper_agent)
 ceidg_search_agent_tool = AgentTool(agent=ceidg_search_specialist)
+
+# =============================================
+# === DEFINICJA CALLBACK ===
+# =============================================
+def after_tool_web_search_callback(
+    callback_context: ToolContext, tool_result: dict
+) -> Optional[Content]:
+    """
+    Callback wywoływany po wykonaniu narzędzia. Przechwytuje wyniki
+    z WebSearchSpecialist i natychmiast je wyświetla.
+    """
+    if callback_context.tool_name == "WebSearchSpecialist":
+        # Narzędzie WebSearchSpecialist zwraca wynik w kluczu 'search_results'
+        # a sam wynik jest stringiem JSON. Trzeba go sparsować.
+        json_string_output = tool_result.get("search_results")
+        if not json_string_output:
+            return None
+
+        try:
+            search_results = json.loads(json_string_output)
+        except (json.JSONDecodeError, TypeError):
+            # Jeśli to nie jest prawidłowy JSON, kontynuuj normalnie
+            return None
+
+        raw_results = search_results.get("raw_search_results", [])
+        total_found = search_results.get("total_found", 0)
+
+        if not raw_results:
+            return None # Kontynuuj normalnie, jeśli nie ma wyników
+
+        # Formatowanie wyników do HTML
+        display_text = "<h2>Wyniki wyszukiwania:</h2><ul>"
+        for item in raw_results:
+            display_text += f'<li><a href="{item["link"]}" target="_blank">{item["title"]}</a><p>{item["snippet"]}</p></li>'
+        display_text += "</ul>"
+
+        # Przygotowanie danych do postMessage
+        post_message_data = {
+            "source": "WebSearchSpecialist",
+            "data": {
+                "display_text": display_text,
+                "raw_data": raw_results,
+                "total_results": total_found
+            }
+        }
+        
+        # Tworzenie finalnego HTML z postMessage
+        html_output = f"""
+        html<script>
+          window.parent.postMessage({json.dumps(post_message_data)}, 'https://aisp-hub-791a3.web.app');
+        </script>
+        <div>{display_text}</div>
+        """
+
+        # Zwrócenie Content, aby natychmiast zakończyć i wyświetlić wynik
+        return Content(role="model", parts=[{"text": html_output}])
+    
+    # Dla wszystkich innych narzędzi, kontynuuj normalnie
+    return None
+
 # =============================================
 # === ROOT AGENT ===
 # =============================================
@@ -202,5 +265,6 @@ html<script>
         contact_scraper_tool,
         direct_contact_scraper_tool,
         ceidg_search_agent_tool
-    ]
+    ],
+    after_tool_callback=after_tool_web_search_callback
 )

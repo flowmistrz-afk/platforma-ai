@@ -1,408 +1,282 @@
-import React, { useState } from 'react';
-import { Container, Form, Button, Card, Spinner, Alert, Row, Col, Badge, Tabs, Tab } from 'react-bootstrap';
+import React, { useState, useEffect, useRef } from 'react';
+import { Container, Form, Button, Card, Spinner, Row, Col, Badge, InputGroup, ProgressBar } from 'react-bootstrap';
 import { toast } from 'react-toastify';
 
-// BAZOWY ADRES TWOJEGO SERWISU
 const BASE_SERVICE_URL = 'https://agent-zniwiarz-service-567539916654.europe-west1.run.app';
+
+// --- TYPY I HELPERY ---
+interface Message {
+    id: number;
+    sender: 'user' | 'agent';
+    text?: string;
+    type: 'text' | 'strategy' | 'progress';
+    data?: any;
+}
 
 async function readStream(response: Response, onChunk: (chunk: any) => void) {
     const reader = response.body?.getReader();
-    if (!reader) {
-        throw new Error("Failed to get reader from response body");
-    }
+    if (!reader) throw new Error("Brak readera");
     const decoder = new TextDecoder();
     let buffer = '';
-
     while (true) {
         const { done, value } = await reader.read();
-        if (done) {
-            break;
-        }
+        if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
-
         for (const line of lines) {
-            if (line.trim() === '') continue;
-            try {
-                const chunk = JSON.parse(line);
-                onChunk(chunk);
-            } catch (error) {
-                console.error("Failed to parse stream chunk:", line, error);
+            if (line.trim()) {
+                try { onChunk(JSON.parse(line)); } catch (e) { console.error(e); }
             }
         }
     }
 }
 
 const HarvesterAgentPage = () => {
-    // --- STAN TRYBU MANUALNEGO ---
-    const [keywordsInput, setKeywordsInput] = useState('');
-    const [citiesInput, setCitiesInput] = useState('');
-    const [pkdInput, setPkdInput] = useState('');
-
-    // --- STAN TRYBU INTELIGENTNEGO (NOWOŚĆ) ---
-    const [smartPrompt, setSmartPrompt] = useState('');
-    const [strategyInfo, setStrategyInfo] = useState<any>(null); // Tu zapiszemy co wymyśliło AI
-
-    // --- STAN WSPÓLNY ---
-    const [activeTab, setActiveTab] = useState('smart'); // Domyślnie włączamy tryb AI
+    const [messages, setMessages] = useState<Message[]>([
+        { id: 1, sender: 'agent', type: 'text', text: 'Cześć! Jestem Twoim Żniwiarzem. Opisz zlecenie (np. "2000m2 posadzki w Dębicy"), a ja przeszukam Internet.' }
+    ]);
+    const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const [results, setResults] = useState<any[] | null>(null);
-    const [logs, setLogs] = useState<any>(null);
+    const [results, setResults] = useState<any[]>([]);
+    const [flowState, setFlowState] = useState<'idle' | 'harvesting' | 'asking' | 'enriching'>('idle');
+    
+    const chatEndRef = useRef<HTMLDivElement>(null);
 
-    // --- LOGIKA 1: TRYB MANUALNY (Twój stary kod) ---
-    const handleManualSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        
-        const keywords = keywordsInput.split(',').map(s => s.trim()).filter(s => s.length > 0);
-        const cities = citiesInput.split(',').map(s => s.trim()).filter(s => s.length > 0);
-        const pkdCodes = pkdInput.split(',').map(s => s.trim()).filter(s => s.length > 0);
+    // Auto-scroll czatu (tylko gdy przychodzi nowa wiadomość)
+    useEffect(() => {
+        chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [messages.length]); 
 
-        if (keywords.length === 0 || cities.length === 0) {
-            toast.error("W trybie ręcznym musisz podać słowa kluczowe i miasta.");
-            return;
-        }
+    // --- LOGIKA CZATU ---
+    const handleSendMessage = async (e?: React.FormEvent) => {
+        e?.preventDefault();
+        if (!input.trim()) return;
+        const userText = input;
+        setInput('');
+        addMessage('user', userText);
 
-        setIsLoading(true);
-        setResults([]);
-        setStrategyInfo(null);
-        setLogs(null);
+        if (flowState === 'idle') await runSmartHarvest(userText);
+        else if (flowState === 'asking') handleDecision(userText);
+    };
 
-        const payload = {
-            cities: cities,
-            keywords: keywords,
-            pkd_codes: pkdCodes.length > 0 ? pkdCodes : null
-        };
-
-        try {
-            const response = await fetch(`${BASE_SERVICE_URL}/harvest`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) throw new Error("Błąd połączenia");
-
-            await readStream(response, (chunk) => {
-                if (chunk.type === 'log') {
-                    toast.info(chunk.message);
-                } else if (chunk.type === 'leads_chunk') {
-                    setResults(prev => [...(prev || []), ...chunk.data]);
-                } else if (chunk.type === 'done') {
-                    toast.success(`Zakończono!`);
-                }
-            });
-
-        } catch (err: any) {
-            toast.error(err.message);
-        } finally {
-            setIsLoading(false);
+    const handleDecision = (text: string) => {
+        const lower = text.toLowerCase();
+        if (lower.includes('tak') || lower.includes('ok') || lower.includes('dawaj') || lower.includes('jasne')) {
+            runEnrichment();
+        } else if (lower.includes('nie') || lower.includes('stop')) {
+            addMessage('agent', 'Zrozumiałem. Kończymy. Wpisz nowe zlecenie, aby zacząć od nowa.');
+            setFlowState('idle');
+        } else {
+            addMessage('agent', 'Nie zrozumiałem. Odpisz "Tak" lub "Nie".');
         }
     };
 
-    // --- LOGIKA 2: TRYB INTELIGENTNY (Gemini) ---
-    const handleSmartSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!smartPrompt.trim()) {
-            toast.error("Opisz zlecenie, aby AI mogło zadziałać.");
-            return;
-        }
+    const addMessage = (sender: 'user' | 'agent', text: string = '', type: Message['type'] = 'text', data: any = null) => {
+        setMessages(prev => [...prev, { id: Date.now(), sender, text, type, data }]);
+    };
 
+    const updateLastProgress = (value: number, label: string) => {
+        setMessages(prev => {
+            const last = prev[prev.length - 1];
+            if (last && last.type === 'progress') {
+                return [...prev.slice(0, -1), { ...last, text: label, data: { value } }];
+            }
+            return prev;
+        });
+    };
+
+    // --- KOMUNIKACJA Z API ---
+    const runSmartHarvest = async (prompt: string) => {
+        setFlowState('harvesting');
         setIsLoading(true);
         setResults([]);
-        setStrategyInfo(null);
-        setLogs(null);
+        
+        addMessage('agent', 'Analizuję...', 'progress', { value: 0 });
 
         try {
             const response = await fetch(`${BASE_SERVICE_URL}/smart-harvest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: smartPrompt })
+                body: JSON.stringify({ prompt })
             });
-
-            if (!response.ok) throw new Error("Błąd połączenia");
 
             await readStream(response, (chunk) => {
-                if (chunk.type === 'log') {
-                    toast.info(chunk.message);
-                } else if (chunk.type === 'strategy') {
-                    setStrategyInfo(chunk.data);
+                if (chunk.type === 'strategy') {
+                    setMessages(prev => [
+                        ...prev.slice(0, -1),
+                        { id: Date.now(), sender: 'agent', type: 'strategy', data: chunk.data },
+                        { id: Date.now() + 1, sender: 'agent', type: 'progress', text: 'Skanuję Google...', data: { value: 5 } }
+                    ]);
                 } else if (chunk.type === 'leads_chunk') {
-                    setResults(prev => [...(prev || []), ...chunk.data]);
+                    setResults(prev => [...prev, ...chunk.data]);
+                    updateLastProgress(chunk.progress, `Pobieram firmy... (${chunk.progress}%)`);
                 } else if (chunk.type === 'done') {
-                    toast.success(`Zakończono!`);
+                    setFlowState('asking');
+                    setIsLoading(false);
+                    setMessages(prev => {
+                        const clean = prev.filter(m => m.type !== 'progress');
+                        return [...clean, { id: Date.now(), sender: 'agent', type: 'text', text: `Znalazłem ${results.length + (chunk.data?.length || 0)} firm. Pobrać dane kontaktowe? (Tak/Nie)` }];
+                    });
                 }
             });
-
-        } catch (err: any) {
-            toast.error(err.message);
-        } finally {
+        } catch (e) {
+            addMessage('agent', 'Błąd połączenia.');
+            setFlowState('idle');
             setIsLoading(false);
         }
     };
 
-    // --- LOGIKA 3: WZBOGACANIE (STREAMING DETEKTYWA) ---
-    const handleEnrich = async () => {
-        if (!results || results.length === 0) return;
-
-        const urls = results
-            .map(r => r.url)
-            .filter(u => u && u.length > 5);
-        const uniqueUrls = [...new Set(urls)];
-
-        if (uniqueUrls.length === 0) {
-            toast.warn("Brak stron WWW do sprawdzenia.");
-            return;
-        }
-
-        toast.info(`Rozpoczynam skanowanie ${uniqueUrls.length} stron...`);
+    const runEnrichment = async () => {
+        setFlowState('enriching');
         setIsLoading(true);
+        const urls = [...new Set(results.map(r => r.url).filter(u => u && u.length > 5))];
+        
+        addMessage('agent', `Skanuję ${urls.length} stron...`, 'progress', { value: 0 });
 
         try {
-            // UWAGA: Nowy endpoint -stream
             const response = await fetch(`${BASE_SERVICE_URL}/enrich`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ urls: uniqueUrls })
+                body: JSON.stringify({ urls })
             });
-
-            if (!response.ok) throw new Error("Błąd połączenia");
 
             let foundCount = 0;
-
-            // CZYTAMY NA ŻYWO!
             await readStream(response, (chunk) => {
                 if (chunk.type === 'enrich_result') {
-                    const enrichedData = chunk.data;
-                    
-                    if (enrichedData.email) foundCount++;
-
-                    // AKTUALIZACJA STANU (Update pojedynczego wiersza)
-                    setResults(prevResults => {
-                        if (!prevResults) return prevResults;
-                        return prevResults.map(lead => {
-                            if (lead.url === enrichedData.url) {
-                                // Scalamy dane:
-                                return {
-                                    ...lead,
-                                    email: enrichedData.email,
-                                    phone: enrichedData.phone,
-                                    address: enrichedData.address,
-                                    description: enrichedData.description,
-                                    projects: enrichedData.projects,
-                                    enrichment_status: enrichedData.email ? 'FOUND_AI' : 'SCANNED'
-                                };
-                            }
-                            return lead;
-                        });
-                    });
-                } 
-                else if (chunk.type === 'done') {
-                    toast.success(`Zakończono! Znaleziono ${foundCount} maili.`);
+                    const enriched = chunk.data;
+                    if (enriched.email) foundCount++;
+                    setResults(prev => prev.map(r => r.url === enriched.url ? { ...r, ...enriched, enrichment_status: enriched.email ? 'FOUND' : 'SCANNED' } : r));
+                    updateLastProgress(chunk.progress, `Skanuję... (Maile: ${foundCount})`);
+                } else if (chunk.type === 'done') {
+                    setIsLoading(false);
+                    setFlowState('idle');
+                    setMessages(prev => [
+                        ...prev.filter(m => m.type !== 'progress'),
+                        { id: Date.now(), sender: 'agent', type: 'text', text: `Gotowe! Znaleziono ${foundCount} maili.` }
+                    ]);
                 }
             });
-
-        } catch (err) {
-            console.error(err);
-            toast.error("Błąd strumienia detektywa");
-        } finally {
+        } catch (e) {
+            addMessage('agent', 'Błąd detektywa.');
             setIsLoading(false);
+            setFlowState('idle');
         }
     };
 
     return (
-        <Container className="py-5">
-            <h1 className="mb-4">🚜 Agent Żniwiarz (The Harvester)</h1>
-            <p className="text-muted">Centrum dowodzenia: Wybierz tryb automatyczny (AI) lub sterowanie ręczne.</p>
+        // FIX: Używamy flex-column i h-100, aby zablokować przewijanie całej strony (body)
+        <Container fluid className="d-flex flex-column p-0" style={{ height: 'calc(100vh - 56px)', overflow: 'hidden' }}>
+            <Row className="flex-grow-1 m-0 h-100">
+                
+                {/* LEWY PANEL (CZAT) */}
+                <Col md={4} lg={3} className="d-flex flex-column border-end p-0 bg-white h-100 shadow-sm" style={{ zIndex: 10 }}>
+                    <div className="p-3 bg-primary text-white flex-shrink-0">
+                        <h5 className="m-0"><i className="bi bi-robot"></i> Asystent AI</h5>
+                    </div>
 
-            <Row>
-                {/* KOLUMNA LEWA: Konfiguracja */}
-                <Col md={5}>
-                    <Card className="shadow-sm mb-4 border-0">
-                        <Card.Header className="bg-white border-bottom-0 pt-3">
-                            <Tabs activeKey={activeTab} onSelect={(k) => setActiveTab(k || 'smart')} className="mb-3">
-                                <Tab eventKey="smart" title="🧠 Tryb AI (Mózg)">
-                                    <div className="mt-3">
-                                        <Form onSubmit={handleSmartSubmit}>
-                                            <Form.Group className="mb-3">
-                                                <Form.Label className="fw-bold">Opisz swoje zlecenie</Form.Label>
-                                                <Form.Control 
-                                                    as="textarea" rows={4}
-                                                    placeholder="np. Szukam podwykonawcy na 2000m2 posadzki żywicznej w Dębicy. To hala przemysłowa, więc potrzebuję dużych firm." 
-                                                    value={smartPrompt}
-                                                    onChange={e => setSmartPrompt(e.target.value)}
-                                                    className="bg-light"
-                                                />
-                                                <Form.Text className="text-muted">
-                                                    AI automatycznie dobierze miasta (promień 50km), słowa kluczowe i kody PKD.
-                                                </Form.Text>
-                                            </Form.Group>
-                                            <div className="d-grid">
-                                                <Button variant="primary" size="lg" type="submit" disabled={isLoading}>
-                                                    {isLoading ? <><Spinner size="sm" animation="border"/> Analizuję...</> : '✨ Uruchom Inteligencję'}
-                                                </Button>
-                                            </div>
-                                        </Form>
-                                    </div>
-                                </Tab>
-                                <Tab eventKey="manual" title="🛠️ Tryb Ręczny">
-                                    <div className="mt-3">
-                                        <Form onSubmit={handleManualSubmit}>
-                                            <Form.Group className="mb-3">
-                                                <Form.Label>Słowa kluczowe</Form.Label>
-                                                <Form.Control 
-                                                    as="textarea" rows={2}
-                                                    placeholder="posadzki, wylewki" 
-                                                    value={keywordsInput}
-                                                    onChange={e => setKeywordsInput(e.target.value)}
-                                                />
-                                            </Form.Group>
-
-                                            <Form.Group className="mb-3">
-                                                <Form.Label>Miasta</Form.Label>
-                                                <Form.Control 
-                                                    as="textarea" rows={2}
-                                                    placeholder="Dębica, Rzeszów" 
-                                                    value={citiesInput}
-                                                    onChange={e => setCitiesInput(e.target.value)}
-                                                />
-                                            </Form.Group>
-
-                                            <Form.Group className="mb-3">
-                                                <Form.Label>PKD (opcjonalne)</Form.Label>
-                                                <Form.Control 
-                                                    type="text" 
-                                                    placeholder="43.33.Z" 
-                                                    value={pkdInput}
-                                                    onChange={e => setPkdInput(e.target.value)}
-                                                />
-                                            </Form.Group>
-
-                                            <div className="d-grid">
-                                                <Button variant="success" size="lg" type="submit" disabled={isLoading}>
-                                                    {isLoading ? <><Spinner size="sm" animation="border"/> Szukam...</> : '🚀 Uruchom Ręcznie'}
-                                                </Button>
-                                            </div>
-                                        </Form>
-                                    </div>
-                                </Tab>
-                            </Tabs>
-                        </Card.Header>
-                    </Card>
-                </Col>
-
-                {/* KOLUMNA PRAWA: Wyniki */}
-                <Col md={7}>
-                    {/* Sekcja: Wyjaśnienie Strategii AI (Tylko w trybie Smart) */}
-                    {strategyInfo && (
-                        <Alert variant="info" className="mb-3 border-0 shadow-sm">
-                            <h5 className="alert-heading">🧠 Strategia AI:</h5>
-                            <p className="mb-2">{strategyInfo.reasoning}</p>
-                            <hr />
-                            <div className="d-flex flex-wrap gap-2">
-                                <Badge bg="secondary">Miasta:</Badge> {strategyInfo.target_cities.join(', ')}
-                            </div>
-                            <div className="d-flex flex-wrap gap-2 mt-1">
-                                <Badge bg="dark">Słowa:</Badge> {strategyInfo.keywords.join(', ')}
-                            </div>
-                        </Alert>
-                    )}
-
-                    {results && (
-                        <>
-                            <div className="d-flex justify-content-between align-items-center mb-3">
-                                <h4 className="mb-0">Wyniki ({results.length})</h4>
-                                <div>
-                                     {/* NOWY PRZYCISK */}
-                                    <Button 
-                                        variant="outline-primary" 
-                                        onClick={handleEnrich} 
-                                        disabled={isLoading}
-                                        className="me-2"
-                                    >
-                                        {isLoading ? <Spinner size="sm" animation="border"/> : '🕵️ Pobierz E-maile'}
-                                    </Button>
-                                    <Badge bg="success">Status: Gotowe</Badge>
+                    {/* FIX: flex-grow-1 i overflow-y-auto pozwala na scrollowanie TYLKO wiadomości */}
+                    <div className="flex-grow-1 p-3 bg-light" style={{ overflowY: 'auto', minHeight: 0 }}>
+                        {messages.map((msg) => (
+                            <div key={msg.id} className={`d-flex mb-3 ${msg.sender === 'user' ? 'justify-content-end' : 'justify-content-start'}`}>
+                                <div className={`p-3 shadow-sm ${msg.sender === 'user' ? 'bg-primary text-white rounded-start rounded-top' : 'bg-white text-dark rounded-end rounded-top'}`} 
+                                     style={{ maxWidth: '90%', borderRadius: '15px' }}>
+                                    {msg.text && <div>{msg.text}</div>}
+                                    {msg.type === 'strategy' && (
+                                        <div className="mt-2 p-2 bg-info-subtle text-dark rounded border border-info small">
+                                            <strong className="d-block mb-1">Strategia:</strong>
+                                            <p className="mb-1 fst-italic">{msg.data.reasoning}</p>
+                                            <div className="mb-1">📍 {msg.data.target_cities.join(', ')}</div>
+                                            <div>🔑 {msg.data.keywords.join(', ')}</div>
+                                        </div>
+                                    )}
+                                    {msg.type === 'progress' && (
+                                        <div className="mt-2" style={{ minWidth: '100%' }}>
+                                            <small>{msg.text}</small>
+                                            <ProgressBar animated variant="success" now={msg.data.value} style={{ height: '6px' }} />
+                                        </div>
+                                    )}
                                 </div>
                             </div>
-                            
-                            <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
-                                {results.map((lead, idx) => (
-                                    <Card key={idx} className="mb-3 border-0 shadow-sm hover-shadow">
-                                        <Card.Body className="p-3">
-                                            <div className="d-flex justify-content-between align-items-start">
-                                                <div style={{ width: '100%' }}>
-                                                    {/* NAGŁÓWEK: Nazwa i Link */}
-                                                    <div className="d-flex justify-content-between">
-                                                        <h5 className="mb-1 text-primary fw-bold text-truncate">
-                                                            {lead.name}
-                                                        </h5>
-                                                        <Badge bg={lead.enrichment_status?.includes('FOUND') ? 'success' : 'light'} text="dark">
-                                                            {lead.enrichment_status === 'FOUND_AI' ? '🤖 AI Data' : (lead.source || 'RAW')}
-                                                        </Badge>
-                                                    </div>
+                        ))}
+                        <div ref={chatEndRef} />
+                    </div>
 
-                                                    {/* DANE KONTAKTOWE (Wiersz) */}
-                                                    <div className="small text-muted mb-2 mt-1">
-                                                        <span className="me-3">📍 {lead.address || lead.city}</span>
-                                                        {lead.url && (
-                                                            <a href={lead.url} target="_blank" rel="noreferrer" className="me-3 text-decoration-none">
-                                                                🌐 WWW ↗
-                                                            </a>
-                                                        )}
-                                                        {lead.phone && <span className="me-3">📞 {lead.phone}</span>}
-                                                        {lead.email && (
-                                                            <span className="fw-bold text-success">📧 {lead.email}</span>
-                                                        )}
-                                                    </div>
+                    <div className="p-3 bg-white border-top flex-shrink-0">
+                        <Form onSubmit={handleSendMessage}>
+                            <InputGroup>
+                                <Form.Control
+                                    placeholder={flowState === 'asking' ? 'Tak / Nie...' : 'Wpisz zlecenie...'}
+                                    value={input}
+                                    onChange={e => setInput(e.target.value)}
+                                    autoFocus
+                                    disabled={isLoading && flowState !== 'asking'}
+                                />
+                                <Button variant="primary" type="submit" disabled={!input.trim() || (isLoading && flowState !== 'asking')}>
+                                    <i className="bi bi-send-fill"></i>
+                                </Button>
+                            </InputGroup>
+                        </Form>
+                    </div>
+                </Col>
 
-                                                    {/* OPIS FIRMY (Z AI) */}
-                                                    {lead.description && (
-                                                        <div className="bg-light p-2 rounded mb-2 small border-start border-4 border-info">
-                                                            <strong>O firmie:</strong> {lead.description}
-                                                        </div>
-                                                    )}
-
-                                                    {/* REALIZACJE (Z AI) */}
-                                                    {lead.projects && lead.projects.length > 0 && (
-                                                        <div className="small">
-                                                            <strong className="text-secondary">🏆 Wybrane realizacje:</strong>
-                                                            <ul className="mb-0 ps-3 mt-1">
-                                                                {lead.projects.map((p: string, i: number) => (
-                                                                    <li key={i} className="text-muted">{p}</li>
-                                                                ))}
-                                                            </ul>
-                                                        </div>
-                                                    )}
-                                                    
-                                                    {/* STARY SNIPPET (Jeśli brak AI) */}
-                                                    {!lead.description && lead.metadata?.desc && (
-                                                        <p className="small mb-0 text-secondary fst-italic mt-2">
-                                                            "{lead.metadata.desc}"
-                                                        </p>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </Card.Body>
-                                    </Card>
-                                ))}
-                            </div>
-                            
-                            <hr />
-                            <details>
-                                <summary className="text-muted small btn btn-link text-decoration-none">🛠️ Pokaż surowy JSON</summary>
-                                <pre className="bg-light p-3 small border mt-2 rounded">{JSON.stringify(logs, null, 2)}</pre>
-                            </details>
-                        </>
-                    )}
+                {/* PRAWY PANEL (WYNIKI) */}
+                {/* FIX: h-100 i overflow-y-auto pozwala na scrollowanie TYLKO wyników */}
+                <Col md={8} lg={9} className="p-0 bg-light h-100 d-flex flex-column">
+                    <div className="p-3 bg-white border-bottom shadow-sm flex-shrink-0 d-flex justify-content-between align-items-center">
+                        <h5 className="m-0 text-secondary">Wyniki <Badge bg="secondary">{results.length}</Badge></h5>
+                        <Badge bg={flowState === 'enriching' ? 'warning' : 'success'}>
+                            {flowState === 'enriching' ? 'Skanowanie...' : 'Gotowe'}
+                        </Badge>
+                    </div>
                     
-                    {!results && !isLoading && (
-                        <div className="text-center py-5 text-muted bg-light rounded border border-dashed">
-                            <i className="bi bi-robot display-4 d-block mb-3"></i>
-                            <h4>Oczekiwanie na rozkazy</h4>
-                            <p>Wybierz tryb po lewej stronie i rozpocznij zbieranie danych.</p>
-                        </div>
-                    )}
+                    <div className="p-4 flex-grow-1" style={{ overflowY: 'auto' }}>
+                        {results.length === 0 ? (
+                            <div className="text-center text-muted mt-5 pt-5">
+                                <i className="bi bi-search display-1 opacity-25"></i>
+                                <h3 className="mt-3 opacity-50">Czekam na dane...</h3>
+                            </div>
+                        ) : (
+                            <Row xs={1} md={2} xl={3} className="g-3">
+                                {results.map((lead, idx) => (
+                                    <Col key={idx}>
+                                        <Card className={`h-100 border-0 shadow-sm ${lead.email ? 'border-start border-5 border-success' : ''}`}>
+                                            <Card.Body>
+                                                <div className="d-flex justify-content-between">
+                                                    <h6 className="fw-bold text-truncate text-primary" title={lead.name} style={{maxWidth: '85%'}}>{lead.name}</h6>
+                                                    {lead.email && <i className="bi bi-check-circle-fill text-success"></i>}
+                                                </div>
+                                                <div className="small text-muted mb-2">📍 {lead.city}</div>
+                                                <div className="small mb-2">
+                                                    {lead.url ? <a href={lead.url} target="_blank" rel="noreferrer" className="text-decoration-none">WWW ↗</a> : <span className="text-muted">Brak WWW</span>}
+                                                </div>
+                                                {(lead.email || lead.phone) && (
+                                                    <div className="bg-light p-2 rounded small mb-2">
+                                                        {lead.email && <div className="text-break text-success fw-bold">📧 {lead.email}</div>}
+                                                        {lead.phone && <div>📞 {lead.phone}</div>}
+                                                    </div>
+                                                )}
+                                                {lead.description && (
+                                                    <p className="small text-secondary fst-italic mb-0 border-top pt-2 mt-1">
+                                                        "{lead.description}"
+                                                    </p>
+                                                )}
+                                            </Card.Body>
+                                            {lead.projects && lead.projects.length > 0 && (
+                                                <Card.Footer className="bg-white border-0 pt-0 pb-3">
+                                                    {lead.projects.slice(0, 2).map((p:string, i:number) => (
+                                                        <Badge key={i} bg="light" text="dark" className="border me-1 mb-1 fw-normal text-truncate" style={{maxWidth: '100%'}}>
+                                                            🏆 {p}
+                                                        </Badge>
+                                                    ))}
+                                                </Card.Footer>
+                                            )}
+                                        </Card>
+                                    </Col>
+                                ))}
+                            </Row>
+                        )}
+                    </div>
                 </Col>
             </Row>
         </Container>

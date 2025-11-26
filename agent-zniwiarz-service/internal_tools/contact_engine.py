@@ -13,45 +13,74 @@ LOCATION = "europe-west1"
 
 try:
     vertexai.init(project=PROJECT_ID, location=LOCATION)
-    ai_model = GenerativeModel("gemini-2.5-flash")
+    ai_model = GenerativeModel("gemini-2.5")
 except Exception as e:
-    print(f"WARN: Nie udało się uruchomić Vertex AI: {e}")
+    print(f"WARN: Vertex AI init failed: {e}")
     ai_model = None
 
 EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
 
+# HEADERS (Udajemy Chrome)
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1"
+}
+
+# Czarne listy
+IGNORE_DOMAINS = [
+    'linkedin.com', 'facebook.com', 'instagram.com', 'twitter.com', 'youtube.com',
+    'olx.pl', 'allegro.pl', 'sprzedajemy.pl', 'oferteo.pl', 'fixly.pl',
+    'panoramafirm.pl', 'pkt.pl', 'aleo.com', 'biznes.gov.pl', 'ceidg.gov.pl',
+    'owg.pl', 'krs-online.com.pl', 'rejestr.io', 'cylex-polska.pl',
+    'baza-firm.com.pl', 'firmy.net', 'zumi.pl', 'gowork.pl', 'muratordom.pl',
+    'google.com', 'google.pl'
+]
+
 async def fetch_clean_text(client, url: str):
     try:
-        # Timeout 15s
-        response = await client.get(url, follow_redirects=True, timeout=15.0)
-        if response.status_code != 200:
+        # HTTP/2 pomaga ominąć blokady (np. na deco-posadzki)
+        response = await client.get(url, follow_redirects=True, timeout=25.0)
+        
+        # 403/404 to błąd, ale 406/418 też mogą się zdarzyć przy blokadzie
+        if response.status_code not in [200, 201]:
             return None, None
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Usuwamy śmieci
-        for script in soup(["script", "style", "nav", "svg", "noscript"]):
+        # POPRAWKA: Nie usuwamy NAV ani FOOTER, bo tam są kontakty!
+        for script in soup(["script", "style", "svg", "noscript", "iframe"]):
             script.extract()
             
         text = soup.get_text(separator=' ', strip=True)
-        return text[:20000], soup # Zwracamy też obiekt soup do szukania linków
-    except Exception:
+        return text[:25000], soup
+    except Exception as e:
+        # print(f"Fetch error {url}: {e}")
         return None, None
 
 async def analyze_page_with_flash(text: str, url: str):
     if not ai_model: return None
     
     prompt = f"""
-    Przeanalizuj tekst ze strony firmy budowlanej ({url}).
-    Wyciągnij dane w płaskim JSON.
+    Przeanalizuj stronę firmy budowlanej: {url}
     
-    JSON Schema:
+    ZADANIE:
+    1. Opisz firmę (1 zdanie).
+    2. Wypisz 3 realizacje.
+    3. Znajdź e-maile i telefony (szukaj w sekcjach kontakt, stopka, o nas).
+    
+    Zwróć JSON:
     {{
         "email": "string or null",
         "phone": "string or null",
-        "address": "string or null (ulica, miasto)",
-        "description": "string or null (max 1 zdanie, czym się zajmują)",
-        "projects": ["string"] (lista 3 realizacji/klientów)
+        "address": "string or null",
+        "description": "string or null",
+        "projects": ["string"],
+        "contacts_list": [
+            {{"name": "string", "role": "string", "email": "string", "phone": "string"}}
+        ]
     }}
     
     TREŚĆ: {text}
@@ -62,10 +91,13 @@ async def analyze_page_with_flash(text: str, url: str):
             generation_config=GenerationConfig(response_mime_type="application/json")
         )
         return json.loads(response.text)
-    except:
-        return None
+    except: return None
 
 async def process_single_url(client, url: str):
+    for domain in IGNORE_DOMAINS:
+        if domain in url.lower():
+            return {"url": url, "status": "SKIPPED_PORTAL"}
+
     target_url = url if url.startswith('http') else f'http://{url}'
     
     result = {
@@ -75,93 +107,123 @@ async def process_single_url(client, url: str):
         "address": None,
         "description": None,
         "projects": [],
+        "contacts_list": [],
         "status": "FAILED"
     }
 
-    # 1. Pobieramy stronę pierwotną
+    # 1. Strona główna
     page_text, soup = await fetch_clean_text(client, target_url)
+    
+    if not page_text:
+        # Jeśli HTTPS nie działa, spróbuj HTTP (dla starych stron)
+        if "https" in target_url:
+            target_url = target_url.replace("https", "http")
+            page_text, soup = await fetch_clean_text(client, target_url)
+    
     if not page_text:
         return result
 
-    # 2. Analiza AI strony pierwotnej
+    # 2. Analiza AI strony głównej
     ai_data = await analyze_page_with_flash(page_text, target_url)
-    
-    if ai_data:
-        _merge_ai_data(result, ai_data)
+    if ai_data: _merge_ai_data(result, ai_data)
 
-    # 3. STRATEGIA RATUNKOWA: Jeśli brak maila, szukamy podstrony "Kontakt"
-    if not result["email"] and soup:
-        contact_link = None
-        # Szukamy linku, który ma w nazwie lub hrefie "kontakt"
-        for a in soup.find_all('a', href=True):
-            href = a['href'].lower()
-            text = a.get_text().lower()
-            if 'kontakt' in href or 'contact' in href or 'kontakt' in text:
-                # Budujemy pełny URL
-                contact_link = urljoin(target_url, a['href'])
-                break
+    # 3. DEEP SCAN (Jeśli brak maila)
+    if not result["email"] and not result.get("contacts_list"):
         
-        # Jeśli nie znaleźliśmy w linkach, próbujemy "na ślepo" standardowy URL
-        if not contact_link:
-             parsed = urlparse(target_url)
-             base_domain = f"{parsed.scheme}://{parsed.netloc}"
-             contact_link = f"{base_domain}/kontakt"
-
-        if contact_link and contact_link != target_url:
-            # Pobieramy stronę kontaktową
-            contact_text, _ = await fetch_clean_text(client, contact_link)
-            if contact_text:
-                # Szybki regex na stronie kontaktowej (szkoda tokenów na drugie AI)
-                emails = re.findall(EMAIL_REGEX, contact_text)
-                if emails:
-                    result["email"] = emails[0]
-                    result["status"] = "FOUND_ON_CONTACT_PAGE"
+        urls_to_check = []
+        
+        # A. Szukanie w linkach (teraz widzi nav i footer!)
+        if soup:
+            for a in soup.find_all('a', href=True):
+                href = a['href'].lower()
+                text = a.get_text().lower()
                 
-                # Jeśli nadal brak, ewentualnie można tu puścić AI drugi raz, ale to kosztuje czas.
-                # Zostańmy przy regexie na podstronie kontaktowej dla szybkości.
+                # Szukamy słów kluczowych
+                keywords = ['kontakt', 'contact', 'o-nas', 'o firmie', 'biuro']
+                if any(k in href or k in text for k in keywords):
+                    try:
+                        full_link = urljoin(target_url, a['href'])
+                        if full_link != target_url and full_link.startswith('http'):
+                            urls_to_check.append(full_link)
+                    except: pass
+        
+        # B. Standardowe ścieżki (fallback)
+        parsed = urlparse(target_url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        defaults = [f"{base}/kontakt", f"{base}/contact", f"{base}/pl/kontakt"]
+        for d in defaults:
+            if d not in urls_to_check: urls_to_check.append(d)
 
-    # 4. Ostateczny Fallback Regex na stronie głównej
-    if not result["email"]:
+        # Sprawdzamy unikalne, max 2
+        seen = set()
+        final_urls = []
+        for u in urls_to_check:
+            if u not in seen:
+                final_urls.append(u)
+                seen.add(u)
+
+        for contact_url in final_urls[:2]:
+            c_text, _ = await fetch_clean_text(client, contact_url)
+            if c_text:
+                # Używamy regexa na stronie kontaktowej
+                emails = re.findall(EMAIL_REGEX, c_text)
+                if emails:
+                    valid = [e for e in emails if not e.endswith(('.png', '.jpg'))]
+                    if valid:
+                        result["email"] = valid[0]
+                        result["status"] = "FOUND_ON_SUBPAGE"
+                        break # Mamy to!
+
+    # 4. Fallback Regex Główny
+    if not result["email"] and not result["contacts_list"]:
         emails = re.findall(EMAIL_REGEX, page_text)
         if emails:
             result["email"] = emails[0]
-            if result["status"] == "FAILED": result["status"] = "REGEX_ONLY"
+            result["status"] = "REGEX_ONLY"
 
     return result
 
 def _merge_ai_data(result, ai_data):
-    """Pomocnicza funkcja do czyszczenia i scalania danych AI"""
-    # Adres
-    raw_addr = ai_data.get("address")
-    if isinstance(raw_addr, dict):
-        result["address"] = ", ".join([str(v) for v in raw_addr.values() if v])
-    elif raw_addr:
-        result["address"] = str(raw_addr)
-
-    # Telefon
+    # (Ta funkcja bez zmian - wklej ją z poprzedniej wersji)
+    if ai_data.get("address"): result["address"] = str(ai_data["address"])
+    if ai_data.get("description"): result["description"] = str(ai_data["description"])
     if ai_data.get("phone"):
         val = ai_data["phone"]
         result["phone"] = ", ".join(map(str, val)) if isinstance(val, list) else str(val)
+    
+    raw_pro = ai_data.get("projects")
+    if isinstance(raw_pro, list): 
+        result["projects"] = [str(p) for p in raw_pro if p]
+    elif isinstance(raw_pro, str):
+        result["projects"] = [raw_pro]
+    
+    raw_contacts = ai_data.get("contacts_list")
+    if isinstance(raw_contacts, list):
+        result["contacts_list"] = raw_contacts
+        if not result["email"]:
+            for c in raw_contacts:
+                if c.get("email"):
+                    result["email"] = c["email"]
+                    break
 
-    # Opis
-    if ai_data.get("description"):
-        result["description"] = str(ai_data["description"])
-
-    # Projekty
-    raw_projects = ai_data.get("projects")
-    if isinstance(raw_projects, list):
-        clean = []
-        for p in raw_projects:
-            if p: 
-                clean.append(" ".join([str(v) for v in p.values() if v]) if isinstance(p, dict) else str(p))
-        result["projects"] = clean
-    elif isinstance(raw_projects, str):
-        result["projects"] = [raw_projects]
-
-    # Email
-    raw_email = ai_data.get("email")
-    if raw_email and isinstance(raw_email, str) and "@" in raw_email:
-        result["email"] = raw_email
+    if ai_data.get("email") and isinstance(ai_data["email"], str) and "@" in ai_data["email"]:
+        result["email"] = ai_data["email"]
         result["status"] = "FOUND_AI"
-    else:
-        result["status"] = "AI_EXTRACTED" # Mamy opis, ale brak maila
+    elif not result.get("status") == "FOUND_ON_SUBPAGE":
+        result["status"] = "AI_EXTRACTED"
+
+async def batch_enrich_urls(urls: list):
+    # HTTP2=True !
+    async with httpx.AsyncClient(verify=False, headers=HEADERS, http2=True, timeout=30.0) as client:
+        tasks = []
+        sem = asyncio.Semaphore(8) # Lekko zmniejszamy, żeby nie zatykać
+
+        async def sem_task(url):
+            async with sem:
+                return await process_single_url(client, url)
+
+        for url in urls:
+            tasks.append(sem_task(url))
+        
+        results = await asyncio.gather(*tasks)
+        return results

@@ -9,6 +9,7 @@ from schemas import (
 import asyncio
 import json
 import httpx
+from urllib.parse import urlparse
 
 # Importy narzędzi
 from internal_tools.google_engine import search_google_internal
@@ -32,38 +33,53 @@ app.add_middleware(
 async def stream_harvest_logic(cities, keywords, pkd_codes=None):
     tasks = []
     
-    # Tworzenie zadań Google
+    # 1. Tworzenie zadań
     if cities and keywords:
         for city in cities:
             for keyword in keywords:
                 query = f"{keyword} {city}"
                 tasks.append(process_google(query, city))
-    
-    # Jeśli brak zadań
+            
     if not tasks:
-        yield json.dumps({"type": "log", "message": "Brak kryteriów wyszukiwania."}) + "\n"
         yield json.dumps({"type": "done"}) + "\n"
         return
 
     total = len(tasks)
     done = 0
     
-    # Uruchamiamy zadania i wysyłamy wyniki jak tylko spłyną (AS COMPLETED)
+    # ZBIÓR UNIKALNYCH DOMEN (DEDUPLIKACJA)
+    seen_domains = set()
+
     for future in asyncio.as_completed(tasks):
         try:
             leads = await future
             done += 1
             
             if leads:
-                # Wysyłamy paczkę znalezionych firm
-                chunk = {
-                    "type": "leads_chunk",
-                    "data": [l.dict() for l in leads],
-                    "progress": round(done/total*100)
-                }
-                yield json.dumps(chunk) + "\n"
+                unique_leads = []
+                for lead in leads:
+                    # Wyciągamy domenę (np. "painpol.com.pl")
+                    if lead.url:
+                        try:
+                            domain = urlparse(lead.url).netloc.replace("www.", "")
+                            if domain not in seen_domains:
+                                seen_domains.add(domain)
+                                unique_leads.append(lead)
+                        except:
+                            # Jeśli URL jest dziwny, dodajemy go (lepiej mieć niż zgubić)
+                            unique_leads.append(lead)
+                    else:
+                        # Firmy bez URL też dodajemy (np. tylko telefon z map)
+                        unique_leads.append(lead)
+
+                if unique_leads:
+                    chunk = {
+                        "type": "leads_chunk",
+                        "data": [l.dict() for l in unique_leads], # Tylko unikalne!
+                        "progress": round(done/total*100)
+                    }
+                    yield json.dumps(chunk) + "\n"
             else:
-                # Tylko aktualizacja paska postępu
                 yield json.dumps({"type": "progress", "value": round(done/total*100)}) + "\n"
                 
         except Exception as e:

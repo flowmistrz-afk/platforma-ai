@@ -47,12 +47,22 @@ class SmartResponse(BaseModel):
 class EnrichRequest(BaseModel):
     urls: List[str]
 
-class EnrichResult(BaseModel):
-    url: str
+# NOWA STRUKTURA DLA KONTAKTÓW
+class ContactInfo(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
+
+class EnrichResult(BaseModel):
+    url: str
+    email: Optional[str] = None       # Główny email (dla kompatybilności)
+    phone: Optional[str] = None       # Główny telefon
     address: Optional[str] = None
     description: Optional[str] = None
-    # To jest kluczowa zmiana:
-    projects: Optional[List[str]] = Field(default_factory=list) 
+    projects: Optional[List[str]] = Field(default_factory=list)
+    
+    # NOWE POLE: Pełna lista kontaktów
+    contacts_list: List[ContactInfo] = Field(default_factory=list) 
+    
     status: str

@@ -5,6 +5,35 @@ import { toast } from 'react-toastify';
 // BAZOWY ADRES TWOJEGO SERWISU
 const BASE_SERVICE_URL = 'https://agent-zniwiarz-service-567539916654.europe-west1.run.app';
 
+async function readStream(response: Response, onChunk: (chunk: any) => void) {
+    const reader = response.body?.getReader();
+    if (!reader) {
+        throw new Error("Failed to get reader from response body");
+    }
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+            break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+            if (line.trim() === '') continue;
+            try {
+                const chunk = JSON.parse(line);
+                onChunk(chunk);
+            } catch (error) {
+                console.error("Failed to parse stream chunk:", line, error);
+            }
+        }
+    }
+}
+
 const HarvesterAgentPage = () => {
     // --- STAN TRYBU MANUALNEGO ---
     const [keywordsInput, setKeywordsInput] = useState('');
@@ -35,8 +64,9 @@ const HarvesterAgentPage = () => {
         }
 
         setIsLoading(true);
-        setResults(null);
-        setStrategyInfo(null); // Resetujemy strategię, bo to tryb ręczny
+        setResults([]);
+        setStrategyInfo(null);
+        setLogs(null);
 
         const payload = {
             cities: cities,
@@ -51,12 +81,18 @@ const HarvesterAgentPage = () => {
                 body: JSON.stringify(payload)
             });
 
-            if (!response.ok) throw new Error(`Błąd serwera: ${response.statusText}`);
+            if (!response.ok) throw new Error("Błąd połączenia");
 
-            const data = await response.json();
-            setResults(data.leads);
-            setLogs(data);
-            toast.success(`Znaleziono ${data.total} firm!`);
+            await readStream(response, (chunk) => {
+                if (chunk.type === 'log') {
+                    toast.info(chunk.message);
+                } else if (chunk.type === 'leads_chunk') {
+                    setResults(prev => [...(prev || []), ...chunk.data]);
+                } else if (chunk.type === 'done') {
+                    toast.success(`Zakończono!`);
+                }
+            });
+
         } catch (err: any) {
             toast.error(err.message);
         } finally {
@@ -73,8 +109,9 @@ const HarvesterAgentPage = () => {
         }
 
         setIsLoading(true);
-        setResults(null);
+        setResults([]);
         setStrategyInfo(null);
+        setLogs(null);
 
         try {
             const response = await fetch(`${BASE_SERVICE_URL}/smart-harvest`, {
@@ -83,16 +120,20 @@ const HarvesterAgentPage = () => {
                 body: JSON.stringify({ prompt: smartPrompt })
             });
 
-            if (!response.ok) throw new Error(`Błąd Mózgu: ${response.statusText}`);
+            if (!response.ok) throw new Error("Błąd połączenia");
 
-            const data = await response.json();
-            
-            // W trybie smart dostajemy: { strategy: {...}, harvest_result: { leads: [...] } }
-            setStrategyInfo(data.strategy);
-            setResults(data.harvest_result.leads);
-            setLogs(data);
-            
-            toast.success(`AI znalazło ${data.harvest_result.total} firm!`);
+            await readStream(response, (chunk) => {
+                if (chunk.type === 'log') {
+                    toast.info(chunk.message);
+                } else if (chunk.type === 'strategy') {
+                    setStrategyInfo(chunk.data);
+                } else if (chunk.type === 'leads_chunk') {
+                    setResults(prev => [...(prev || []), ...chunk.data]);
+                } else if (chunk.type === 'done') {
+                    toast.success(`Zakończono!`);
+                }
+            });
+
         } catch (err: any) {
             toast.error(err.message);
         } finally {
@@ -100,16 +141,13 @@ const HarvesterAgentPage = () => {
         }
     };
 
-    // --- LOGIKA 3: WZBOGACANIE (DETEKTYW) ---
+    // --- LOGIKA 3: WZBOGACANIE (STREAMING DETEKTYWA) ---
     const handleEnrich = async () => {
         if (!results || results.length === 0) return;
 
-        // Filtrujemy tylko te, które mają sensowny URL (nie puste, nie undefined)
         const urls = results
             .map(r => r.url)
             .filter(u => u && u.length > 5);
-
-        // Deduplikacja (usuwamy powtórki URLi przed wysłaniem)
         const uniqueUrls = [...new Set(urls)];
 
         if (uniqueUrls.length === 0) {
@@ -117,45 +155,56 @@ const HarvesterAgentPage = () => {
             return;
         }
 
-        // UX: Ostrzeżenie przy dużej liczbie
-        if (uniqueUrls.length > 50) {
-            toast.info(`Skanuję ${uniqueUrls.length} stron. To może chwilę potrwać (ok. 30-60s)...`);
-        }
-
+        toast.info(`Rozpoczynam skanowanie ${uniqueUrls.length} stron...`);
         setIsLoading(true);
 
         try {
+            // UWAGA: Nowy endpoint -stream
             const response = await fetch(`${BASE_SERVICE_URL}/enrich`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ urls: uniqueUrls })
             });
 
-            if (!response.ok) throw new Error("Błąd Detektywa");
+            if (!response.ok) throw new Error("Błąd połączenia");
 
-            const enrichedData = await response.json(); // Tablica [{url, email, status}]
+            let foundCount = 0;
 
-            // MERGE DANYCH (Najtrudniejsza część - łączenie wyników)
-            const updatedResults = results.map(lead => {
-                // Znajdź czy dla tego URL-a mamy wynik detektywa
-                const enrichment = enrichedData.find((e: any) => e.url === lead.url);
-                
-                if (enrichment && enrichment.email) {
-                    return { ...lead, email: enrichment.email, enrichment_status: 'FOUND' };
-                } else if (enrichment) {
-                    return { ...lead, enrichment_status: enrichment.status };
+            // CZYTAMY NA ŻYWO!
+            await readStream(response, (chunk) => {
+                if (chunk.type === 'enrich_result') {
+                    const enrichedData = chunk.data;
+                    
+                    if (enrichedData.email) foundCount++;
+
+                    // AKTUALIZACJA STANU (Update pojedynczego wiersza)
+                    setResults(prevResults => {
+                        if (!prevResults) return prevResults;
+                        return prevResults.map(lead => {
+                            if (lead.url === enrichedData.url) {
+                                // Scalamy dane:
+                                return {
+                                    ...lead,
+                                    email: enrichedData.email,
+                                    phone: enrichedData.phone,
+                                    address: enrichedData.address,
+                                    description: enrichedData.description,
+                                    projects: enrichedData.projects,
+                                    enrichment_status: enrichedData.email ? 'FOUND_AI' : 'SCANNED'
+                                };
+                            }
+                            return lead;
+                        });
+                    });
+                } 
+                else if (chunk.type === 'done') {
+                    toast.success(`Zakończono! Znaleziono ${foundCount} maili.`);
                 }
-                return lead;
             });
 
-            setResults(updatedResults);
-            
-            // Policz ile znaleziono
-            const foundCount = enrichedData.filter((e: any) => e.email).length;
-            toast.success(`Znaleziono ${foundCount} adresów e-mail!`);
-
         } catch (err) {
-            toast.error("Wystąpił błąd podczas pobierania maili.");
+            console.error(err);
+            toast.error("Błąd strumienia detektywa");
         } finally {
             setIsLoading(false);
         }
@@ -279,33 +328,60 @@ const HarvesterAgentPage = () => {
                             
                             <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
                                 {results.map((lead, idx) => (
-                                    <Card key={idx} className="mb-2 border-0 shadow-sm hover-shadow">
+                                    <Card key={idx} className="mb-3 border-0 shadow-sm hover-shadow">
                                         <Card.Body className="p-3">
                                             <div className="d-flex justify-content-between align-items-start">
-                                                <div style={{ maxWidth: '80%' }}>
-                                                    <h6 className="mb-1 text-primary fw-bold text-truncate">{lead.name}</h6>
-                                                    <div className="small text-muted mb-2">
-                                                        📍 {lead.city} | 
-                                                        {lead.url ? (
-                                                            <a href={lead.url} target="_blank" rel="noreferrer" className="ms-1">{new URL(lead.url).hostname} ↗</a>
-                                                        ) : <span className="ms-1">Brak WWW</span>}
-                                                        
-                                                        {/* NOWE POLE EMAIL */}
+                                                <div style={{ width: '100%' }}>
+                                                    {/* NAGŁÓWEK: Nazwa i Link */}
+                                                    <div className="d-flex justify-content-between">
+                                                        <h5 className="mb-1 text-primary fw-bold text-truncate">
+                                                            {lead.name}
+                                                        </h5>
+                                                        <Badge bg={lead.enrichment_status?.includes('FOUND') ? 'success' : 'light'} text="dark">
+                                                            {lead.enrichment_status === 'FOUND_AI' ? '🤖 AI Data' : (lead.source || 'RAW')}
+                                                        </Badge>
+                                                    </div>
+
+                                                    {/* DANE KONTAKTOWE (Wiersz) */}
+                                                    <div className="small text-muted mb-2 mt-1">
+                                                        <span className="me-3">📍 {lead.address || lead.city}</span>
+                                                        {lead.url && (
+                                                            <a href={lead.url} target="_blank" rel="noreferrer" className="me-3 text-decoration-none">
+                                                                🌐 WWW ↗
+                                                            </a>
+                                                        )}
+                                                        {lead.phone && <span className="me-3">📞 {lead.phone}</span>}
                                                         {lead.email && (
-                                                            <div className="mt-1 text-success fw-bold p-1 border border-success rounded d-inline-block bg-light">
-                                                                📧 {lead.email}
-                                                            </div>
+                                                            <span className="fw-bold text-success">📧 {lead.email}</span>
                                                         )}
                                                     </div>
-                                                    {lead.metadata?.desc && (
-                                                        <p className="small mb-0 text-secondary" style={{ fontSize: '0.85rem' }}>
-                                                            {lead.metadata.desc.length > 150 ? lead.metadata.desc.substring(0, 150) + '...' : lead.metadata.desc}
+
+                                                    {/* OPIS FIRMY (Z AI) */}
+                                                    {lead.description && (
+                                                        <div className="bg-light p-2 rounded mb-2 small border-start border-4 border-info">
+                                                            <strong>O firmie:</strong> {lead.description}
+                                                        </div>
+                                                    )}
+
+                                                    {/* REALIZACJE (Z AI) */}
+                                                    {lead.projects && lead.projects.length > 0 && (
+                                                        <div className="small">
+                                                            <strong className="text-secondary">🏆 Wybrane realizacje:</strong>
+                                                            <ul className="mb-0 ps-3 mt-1">
+                                                                {lead.projects.map((p: string, i: number) => (
+                                                                    <li key={i} className="text-muted">{p}</li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+                                                    
+                                                    {/* STARY SNIPPET (Jeśli brak AI) */}
+                                                    {!lead.description && lead.metadata?.desc && (
+                                                        <p className="small mb-0 text-secondary fst-italic mt-2">
+                                                            "{lead.metadata.desc}"
                                                         </p>
                                                     )}
                                                 </div>
-                                                <Badge bg={lead.source === 'Google API' ? 'info' : 'warning'}>
-                                                    {lead.source}
-                                                </Badge>
                                             </div>
                                         </Card.Body>
                                     </Card>

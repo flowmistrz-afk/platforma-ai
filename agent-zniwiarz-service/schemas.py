@@ -50,4 +50,9 @@ class EnrichRequest(BaseModel):
 class EnrichResult(BaseModel):
     url: str
     email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    description: Optional[str] = None
+    # To jest kluczowa zmiana:
+    projects: Optional[List[str]] = Field(default_factory=list) 
     status: str

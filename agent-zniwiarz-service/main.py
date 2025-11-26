@@ -1,26 +1,25 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List # Dodane dla typowania listy wyników
+from fastapi.responses import StreamingResponse
 from schemas import (
     HarvestRequest, HarvestResponse, LeadResult, 
     SmartRequest, SmartResponse, StrategyInfo,
-    EnrichRequest, EnrichResult # <-- Dodano nowe schematy
+    EnrichRequest, EnrichResult
 )
 import asyncio
+import json
+import httpx
 
-# Importujemy nasze narzędzia wewnętrzne (Silniki)
+# Importy narzędzi
 from internal_tools.google_engine import search_google_internal
-# from internal_tools.ceidg_engine import search_ceidg_internal
 from internal_tools.brain_engine import generate_strategy
-from internal_tools.contact_engine import batch_enrich_urls # <-- Dodano silnik kontaktowy
+# Importujemy funkcję przetwarzania pojedynczego URL
+from internal_tools.contact_engine import process_single_url
 
-app = FastAPI(title="Agent Żniwiarz Standalone (All-in-One)")
+app = FastAPI(title="Agent Żniwiarz Standalone (Streaming)")
 
-# --- KONFIGURACJA CORS ---
-origins = [
-    "*"  # Pozwalamy na dostęp z każdego źródła (Frontend)
-]
-
+# KONFIGURACJA CORS
+origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -29,109 +28,131 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- WSPÓLNA LOGIKA WYKONAWCZA (CORE) ---
-async def execute_harvest_logic(cities, keywords, pkd_codes=None):
-    """
-    Ta funkcja wykonuje brudną robotę (szukanie). 
-    Jest używana zarówno przez tryb ręczny, jak i inteligentny.
-    """
+# --- LOGIKA STRUMIENIOWANIA (Szukanie) ---
+async def stream_harvest_logic(cities, keywords, pkd_codes=None):
     tasks = []
     
-    # 1. Zadania dla Google
-    # Sprawdzamy czy mamy dane wejściowe, żeby nie robić pustych przebiegów
+    # Tworzenie zadań Google
     if cities and keywords:
         for city in cities:
             for keyword in keywords:
                 query = f"{keyword} {city}"
                 tasks.append(process_google(query, city))
-            
-    # 2. Zadania dla CEIDG (jeśli podano kody)
-    # if pkd_codes and cities:
-    #     for city in cities:
-    #         for pkd in pkd_codes:
-    #             tasks.append(process_ceidg(pkd, city))
     
-    # Jeśli nie ma żadnych zadań, zwracamy pustą listę
+    # Jeśli brak zadań
     if not tasks:
-        return []
+        yield json.dumps({"type": "log", "message": "Brak kryteriów wyszukiwania."}) + "\n"
+        yield json.dumps({"type": "done"}) + "\n"
+        return
 
-    # 3. Odpalamy wszystko naraz (Równolegle)
-    results_nested = await asyncio.gather(*tasks)
+    total = len(tasks)
+    done = 0
     
-    # 4. Spłaszczamy listę list (List[List[Lead]] -> List[Lead])
-    flat_leads = [item for sublist in results_nested for item in sublist]
+    # Uruchamiamy zadania i wysyłamy wyniki jak tylko spłyną (AS COMPLETED)
+    for future in asyncio.as_completed(tasks):
+        try:
+            leads = await future
+            done += 1
+            
+            if leads:
+                # Wysyłamy paczkę znalezionych firm
+                chunk = {
+                    "type": "leads_chunk",
+                    "data": [l.dict() for l in leads],
+                    "progress": round(done/total*100)
+                }
+                yield json.dumps(chunk) + "\n"
+            else:
+                # Tylko aktualizacja paska postępu
+                yield json.dumps({"type": "progress", "value": round(done/total*100)}) + "\n"
+                
+        except Exception as e:
+            print(f"Błąd zadania: {e}")
+            done += 1
     
-    return flat_leads
+    yield json.dumps({"type": "done"}) + "\n"
 
-# --- ENDPOINT 1: MANUALNY (Stary formularz) ---
-@app.post("/harvest", response_model=HarvestResponse)
-async def harvest_endpoint(request: HarvestRequest):
-    leads = await execute_harvest_logic(
-        cities=request.cities, 
-        keywords=request.keywords, 
-        pkd_codes=request.pkd_codes
-    )
-    return HarvestResponse(total=len(leads), leads=leads)
+# --- LOGIKA STRUMIENIOWANIA (Detektyw/Enrich) ---
+async def stream_enrich_logic(urls):
+    sem = asyncio.Semaphore(10) # Max 10 równoległych analiz stron
+    # Timeout 25s na stronę
+    limits = httpx.Limits(max_keepalive_connections=5, max_connections=15)
+    
+    async with httpx.AsyncClient(limits=limits, verify=False, timeout=25.0) as client:
+        
+        async def sem_task(url):
+            async with sem:
+                return await process_single_url(client, url)
 
-# --- ENDPOINT 2: INTELIGENTNY (Nowy "Mózg") ---
-@app.post("/smart-harvest", response_model=SmartResponse)
+        tasks = [sem_task(url) for url in urls]
+        total = len(tasks)
+        completed = 0
+
+        for future in asyncio.as_completed(tasks):
+            try:
+                result = await future
+                completed += 1
+                
+                chunk = {
+                    "type": "enrich_result",
+                    "data": result,
+                    "progress": round((completed / total) * 100)
+                }
+                yield json.dumps(chunk) + "\n"
+                
+            except Exception as e:
+                print(f"Błąd Enrich: {e}")
+                completed += 1
+
+        yield json.dumps({"type": "done"}) + "\n"
+
+
+# --- ENDPOINTY (Nazwy przywrócone do standardowych) ---
+
+@app.post("/smart-harvest")
 async def smart_harvest_endpoint(request: SmartRequest):
-    # 1. Generowanie strategii przez AI (Gemini)
-    # To wywołuje funkcję z pliku internal_tools/brain_engine.py
-    strategy_data = await generate_strategy(request.prompt)
-    
-    # Konwersja słownika na obiekt Pydantic
-    strategy = StrategyInfo(**strategy_data)
-    
-    # 2. Wykonanie strategii (Używamy tej samej logiki co wyżej)
-    leads = await execute_harvest_logic(
-        cities=strategy.target_cities, 
-        keywords=strategy.keywords, 
-        pkd_codes=strategy.pkd_codes
-    )
-    
-    # 3. Zwrócenie wyniku (Strategia + Znalezione firmy)
-    return SmartResponse(
-        strategy=strategy,
-        harvest_result=HarvestResponse(total=len(leads), leads=leads)
-    )
+    async def event_generator():
+        yield json.dumps({"type": "log", "message": "🧠 Mózg analizuje..."}) + "\n"
+        
+        # 1. Generowanie strategii
+        strategy_data = await generate_strategy(request.prompt)
+        strategy = StrategyInfo(**strategy_data)
+        yield json.dumps({"type": "strategy", "data": strategy.dict()}) + "\n"
+        
+        yield json.dumps({"type": "log", "message": f"Szukam w: {', '.join(strategy.target_cities)}"}) + "\n"
 
-# --- ENDPOINT 3: DETEKTYW (Pobieranie E-maili) ---
-@app.post("/enrich", response_model=List[EnrichResult])
+        # 2. Uruchomienie szukania
+        async for chunk in stream_harvest_logic(strategy.target_cities, strategy.keywords, strategy.pkd_codes):
+            yield chunk
+            
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+@app.post("/harvest")
+async def harvest_endpoint(request: HarvestRequest):
+    async def event_generator():
+        yield json.dumps({"type": "log", "message": "Rozpoczynam wyszukiwanie ręczne..."}) + "\n"
+        async for chunk in stream_harvest_logic(request.cities, request.keywords, request.pkd_codes):
+            yield chunk
+    return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+
+@app.post("/enrich")
 async def enrich_endpoint(request: EnrichRequest):
-    """
-    Przyjmuje listę URLi, wchodzi na każdy i szuka maila.
-    """
-    # Unikalne URLe (żeby nie skrapować tego samego 2 razy)
     unique_urls = list(set(request.urls))
-    
-    # Wywołanie funkcji z contact_engine.py
-    results = await batch_enrich_urls(unique_urls)
-    
-    # Mapowanie na model Pydantic
-    return [EnrichResult(**r) for r in results]
+    return StreamingResponse(stream_enrich_logic(unique_urls), media_type="application/x-ndjson")
 
 
-# --- FUNKCJE POMOCNICZE (Mappers) ---
-
+# --- POMOCNICZE ---
 async def process_google(query, city):
-    # Wywołuje silnik Google z paginacją (pobiera do 30 wyników na zapytanie)
-    raw_data = await search_google_internal(query, target_count=30)
-    
+    # Pobieramy max 20 wyników na zapytanie (2 strony Google)
+    raw_data = await search_google_internal(query, target_count=20)
     leads = []
     for item in raw_data:
         leads.append(LeadResult(
-            name=item.get('title', 'Brak nazwy'),
+            name=item.get('title') or 'Brak nazwy',
             url=item.get('url'),
             city=city,
             source="Google API",
-            metadata={"desc": item.get('description', '')},
-            status="RAW" # Domyślny status
+            metadata={"desc": item.get('description') or ""},
+            status="RAW"
         ))
     return leads
-
-async def process_ceidg(pkd, city):
-    # Wywołuje silnik CEIDG (obecnie zwraca pustą listę, póki nie dodasz klucza)
-    # raw_data = await search_ceidg_internal(pkd, city)
-    # Tu byłaby konwersja danych z CEIDG na LeadResult
-    return []

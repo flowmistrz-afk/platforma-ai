@@ -2,6 +2,19 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.runGoogleSearch = runGoogleSearch;
 const firebase_init_1 = require("../firebase-init");
+const secret_manager_1 = require("@google-cloud/secret-manager");
+const secretManagerClient = new secret_manager_1.SecretManagerServiceClient();
+async function getSecret(secretName) {
+    var _a, _b;
+    const [version] = await secretManagerClient.accessSecretVersion({
+        name: `projects/automatyzacja-pesamu/secrets/${secretName}/versions/latest`,
+    });
+    const payload = (_b = (_a = version.payload) === null || _a === void 0 ? void 0 : _a.data) === null || _b === void 0 ? void 0 : _b.toString();
+    if (!payload) {
+        throw new Error(`Secret ${secretName} has no payload.`);
+    }
+    return payload;
+}
 async function filterLinksWithAI(query, searchResults) {
     var _a, _b, _c, _d, _e;
     if (!searchResults || searchResults.length === 0) {
@@ -58,8 +71,8 @@ Zwróć **wyłącznie** przefiltrowaną listę linków w tym samym formacie JSON
  */
 async function runGoogleSearch(taskId, query) {
     var _a, _b, _c;
-    const apiKey = process.env.SEARCH_API_KEY;
-    const searchEngineId = process.env.SEARCH_ENGINE_CX;
+    const apiKey = await getSecret('SEARCH_API_KEY');
+    const searchEngineId = await getSecret('SEARCH_ENGINE_CX');
     if (!apiKey || !searchEngineId) {
         throw new Error("Brak klucza API lub ID wyszukiwarki w zmiennych środowiskowych.");
     }

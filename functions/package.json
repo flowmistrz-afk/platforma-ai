@@ -27,7 +27,8 @@
     "firebase-functions": "^6.4.1",
     "google-auth-library": "^9.11.0",
     "node-fetch": "^3.3.2",
-    "puppeteer-core": "^24.22.3"
+    "puppeteer-core": "^24.22.3",
+    "@google-cloud/secret-manager": "^5.0.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.13",

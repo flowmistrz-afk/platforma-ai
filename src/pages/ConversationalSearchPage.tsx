@@ -1,9 +1,10 @@
-import React, { useState, useLayoutEffect, useRef } from 'react';
+import React, { useState, useLayoutEffect, useRef, useEffect } from 'react';
 import { Card, ListGroup, Form } from 'react-bootstrap';
 import './ConversationalSearchPage.css';
 
 const ConversationalSearchPage = () => {
   const [visiblePanel, setVisiblePanel] = useState<string | null>(null);
+  const [rawData, setRawData] = useState<any[]>([]);
   const pageWrapperRef = useRef<HTMLDivElement>(null);
 
   // This hook dynamically calculates and sets the container's height.
@@ -22,6 +23,28 @@ const ConversationalSearchPage = () => {
     calculateHeight();
     window.addEventListener('resize', calculateHeight);
     return () => window.removeEventListener('resize', calculateHeight);
+  }, []);
+
+  // This hook listens for messages from the iframe.
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // For security, you should check the origin of the message.
+      if (event.origin !== 'https://google-service-v2-agent-567539916654.europe-west1.run.app') {
+        return;
+      }
+
+      // Check if the data has the expected format.
+      if (event.data && event.data.source && event.data.data && event.data.data.raw_data) {
+        // Add the new data to the rawData array.
+        setRawData(prevData => [...prevData, event.data.data.raw_data]);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
   }, []);
 
   const tools = [
@@ -89,7 +112,7 @@ const ConversationalSearchPage = () => {
             <Card>
               <Card.Header as="h5">Surowe dane</Card.Header>
               <Card.Body>
-                <p>Tutaj będą wyświetlane surowe dane.</p>
+                <pre>{JSON.stringify(rawData, null, 2)}</pre>
               </Card.Body>
             </Card>
         </div>

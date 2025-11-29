@@ -25,6 +25,7 @@ import AgentSearchBuildingPermitsRunPage from './pages/AgentSearchBuildingPermit
 import AgentV2Runner from './components/agent/AgentV2Runner';
 import AgentBigQueryPage from './pages/AgentBigQueryPage';
 import ConversationalSearchPage from './pages/ConversationalSearchPage';
+import HarvesterAgentPage from './pages/HarvesterAgentPage'; // New import
 
 function App() {
   const { userProfile, loading } = useAuth();
@@ -172,6 +173,14 @@ function App() {
               element={
                 <ProtectedRoute roles={['company-admin', 'company-user']}>
                   <ConversationalSearchPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route // New Route for HarvesterAgentPage
+              path="/agents/run/harvester-agent"
+              element={
+                <ProtectedRoute roles={['company-admin', 'company-user']}>
+                  <HarvesterAgentPage />
                 </ProtectedRoute>
               }
             />

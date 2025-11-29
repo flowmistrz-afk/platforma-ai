@@ -1,5 +1,5 @@
 # Główna biblioteka Agent Development Kit
-google-adk
+google-adk==1.18.0
 
 # Biblioteka do komunikacji między agentami (A2A)
 a2a-sdk

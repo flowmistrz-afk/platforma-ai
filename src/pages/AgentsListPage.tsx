@@ -40,6 +40,12 @@ const AgentsListPage = () => {
       name: 'Agent wyszukiwania konwersacyjny',
       description: 'Porozmawiaj z agentem, aby przeszukać internet lub bazę danych CEIDG.',
       path: '/agents/run/conversational-search'
+    },
+    {
+      id: 'harvester-agent',
+      name: 'Agent Żniwiarz',
+      description: 'Wyszukuje i zbiera dane o firmach z różnych źródeł, takich jak Google, na podstawie podanych słów kluczowych i lokalizacji.',
+      path: '/agents/run/harvester-agent'
     }
   ];
 

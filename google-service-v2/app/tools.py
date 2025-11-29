@@ -57,8 +57,10 @@ def perform_maximum_google_search(query: str) -> dict:
     logging.info(f"[Google Search] Pobrano dokładnie {total} linków dla zapytania: '{query}'")
 
     return {
-        "raw_search_results": all_results,
-        "total_found": total
+        "search_results": {
+            "raw_search_results": all_results,
+            "total_found": total
+        }
     }
 
 # === AI CONTACT SCRAPER ===

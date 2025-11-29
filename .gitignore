@@ -1,26 +1,55 @@
-# Dependencies
-node_modules
-.pnp
-.pnp.js
+# Ignored files and directories for platforma-ai project
 
-# Testing
-coverage
+# Node.js dependencies
+node_modules/
+package-lock.json # Often regenerated, can cause conflicts
 
-# Production
-build
+# Build artifacts
+build/
+dist/
+.parcel-cache/
 
-# Misc
+# Environment variables
+.env
+.env.*
+*.env
+
+# Firebase specific
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+
+# Google Cloud specific
+key.json # Service account key
+*.json # Be careful with this, ensure it doesn't exclude necessary config files like package.json or tsconfig.json
+# More specific JSON exclusions if needed:
+# !package.json
+# !tsconfig.json
+# !firebase.json
+
+# Logs
+*.log
+logs/
+
+# IDE and OS generated files
+.idea/
+.vscode/
 .DS_Store
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+Thumbs.db
 
-# Service account key
-service-account-key.json
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.swp
 
-# Virtual environment
-venv/
+# Python specific (if any agents use Python)
+__pycache__/
+*.pyc
 .venv/
+venv/
 
-# Secrets
-google-searcher-agent-service/automatyzacja-pesamu-b9819b16b782.json
+# Other generated files
+*.zip
+*.tar.gz
+*.rar

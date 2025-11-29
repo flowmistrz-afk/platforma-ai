@@ -1,5 +1,20 @@
 import { Task } from "../types";
 import { db, vertex_ai } from '../firebase-init';
+import { SecretManagerServiceClient } from '@google-cloud/secret-manager';
+
+const secretManagerClient = new SecretManagerServiceClient();
+
+async function getSecret(secretName: string): Promise<string> {
+  const [version] = await secretManagerClient.accessSecretVersion({
+    name: `projects/automatyzacja-pesamu/secrets/${secretName}/versions/latest`,
+  });
+
+  const payload = version.payload?.data?.toString();
+  if (!payload) {
+    throw new Error(`Secret ${secretName} has no payload.`);
+  }
+  return payload;
+}
 
 // Definicja typu dla pojedynczego wyniku wyszukiwania
 export interface SearchResult {
@@ -69,8 +84,8 @@ Zwróć **wyłącznie** przefiltrowaną listę linków w tym samym formacie JSON
  * @returns Obietnica zwracająca tablicę wyników wyszukiwania.
  */
 export async function runGoogleSearch(taskId: string, query: Task['query']): Promise<{ title: string; link: string; snippet: string; }[]> {
-  const apiKey = process.env.SEARCH_API_KEY;
-  const searchEngineId = process.env.SEARCH_ENGINE_CX;
+  const apiKey = await getSecret('SEARCH_API_KEY');
+  const searchEngineId = await getSecret('SEARCH_ENGINE_CX');
 
   if (!apiKey || !searchEngineId) {
     throw new Error("Brak klucza API lub ID wyszukiwarki w zmiennych środowiskowych.");

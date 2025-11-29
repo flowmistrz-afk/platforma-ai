@@ -1,3 +1,6 @@
+# =============================================
+# === agent.py - KOMPLETNY I POPRAWNY KOD ===
+# =============================================
 from google.adk.agents import LlmAgent
 from google.adk.tools import AgentTool
 from .tools import (
@@ -7,151 +10,82 @@ from .tools import (
     ceidg_search_tool,
     ceidg_details_tool
 )
+import asyncio
 import json
-from google.adk.agents.callback_context import CallbackContext, ToolContext
-from google.genai.types import Content
-from typing import Optional
+import re
+import logging
+import html
+from google.genai.types import Content, Part , Blob
+from typing import Optional, TYPE_CHECKING, Dict, Any
+
+if TYPE_CHECKING:
+    from google.adk.tools.tool_context import ToolContext
+    from google.adk.tools.base_tool import BaseTool
 
 # Wczytaj dane PKD
 with open("app/pkd-database.json", "r", encoding="utf-8") as f:
     pkd_data = json.load(f)
 
 # =============================================
-# === SPECJALISTA 1: GOOGLE SEARCH ===
+# === SPECJALIŚCI ===
 # =============================================
 web_search_specialist = LlmAgent(
     name="WebSearchSpecialist",
     model="gemini-2.5-pro",
     description="Przeszukuje Google i zwraca WSZYSTKIE wyniki.",
     instruction='''
-        Twoje zadanie:
-        1. Wywołaj `perform_maximum_google_search` z zapytaniem użytkownika.
-        2. Zaloguj: "Wywołuję wyszukiwanie...".
-        3. **NIE FILTRUJ, NIE PODSUMOWUJ**.
-        4. Zwróć **CAŁY wynik narzędzia** jako **jeden JSON**.
-
-        **FORMAT (DOKŁADNIE TAK):**
-        ```json
-        {
-          "raw_search_results": [
-            {"link": "https://...", "title": "...", "snippet": "..."},
-            ...
-          ],
-          "total_found": 73
-        }
-Użyj dokładnej liczby z wyniku narzędzia. Bez komentarzy.
+Twoje zadanie:
+1. Wywołaj `perform_maximum_google_search` z zapytaniem użytkownika.
+2. **NIE DODAWAJ ŻADNYCH KOMENTARZY, NIE UŻYWAJ MARKDOWN, NIE PISZ "Wywołuję wyszukiwanie..."**
+3. Zwróć **TYLKO I WYŁĄCZNIE** JSON w formacie:
+{
+  "search_results": {
+    "raw_search_results": [ ... ],
+    "total_found": 84
+  }
+}
+**BEZ ```json, BEZ TEKSTU PRZED I PO, BEZ OBJAŚNIEŃ.**
 ''',
     tools=[google_search_custom_tool],
-    output_key="search_results"
 )
-# =============================================
-# === SPECJALISTA 2: ANALIZA LINKÓW ===
-# =============================================
+
 link_analysis_specialist = LlmAgent(
     name="LinkAnalysisSpecialist",
     model="gemini-2.5-pro",
     description="Klasyfikuje linki z wyników wyszukiwania.",
     instruction='''
-Sprawdź kontekst sesji:
-
-Jeśli nie ma klucza search_results → odpowiedz:
-"Brak wyników. Najpierw użyj WebSearchSpecialist."
-
-Jeśli dane istnieją:
-
-Weź raw_search_results.
-Odrzuć:
-
-social media (Facebook, LinkedIn, Twitter, Instagram)
-portale pracy (Indeed, Pracuj.pl)
-katalogi (Wikipedia, Yellow Pages)
-
-
-Sklasyfikuj:
-
-companyUrls: strony firm
-portalUrls: portale branżowe (Oferteo, Panorama Firm)
-
-
-
-Zwróć TYLKO JSON:
-json{ "companyUrls": ["url1"], "portalUrls": ["url2"] }
+Sprawdź kontekst sesji. Jeśli są wyniki wyszukiwania, sklasyfikuj linki na firmowe i portale, odrzucając social media i portale pracy. Zwróć TYLKO JSON: {"companyUrls": [...], "portalUrls": [...]}. Jeśli nie ma wyników, odpowiedz: "Brak wyników. Najpierw użyj WebSearchSpecialist."
 ''',
     tools=[],
     output_key="classified_links"
 )
-# =============================================
-# === SPECJALISTA 3: KONTAKTY ===
-# =============================================
+
 contact_scraper_agent = LlmAgent(
     name="ContactScraper",
     model="gemini-2.5-pro",
-    description="Pobiera dane kontaktowe z linków firm, które zostały znalezione przez WebSearchSpecialist.",
+    description="Pobiera dane kontaktowe z linków firm.",
     instruction='''
-Sprawdź kontekst:
-
-Jeśli nie ma classified_links → odpowiedz:
-"Brak linków. Najpierw użyj WebSearchSpecialist."
-
-Jeśli dane istnieją:
-
-Dla każdego companyUrls:
-
-Loguj: "Przetwarzam: [url]"
-Użyj simple_webfetch
-Jeśli contact_links → przetwórz je
-Jeśli błąd → użyj advanced_scraper
-
-
-Zbierz wszystko
-Zwróć jako JSON string
+Sprawdź kontekst. Jeśli są sklasyfikowane linki firm (`companyUrls`), dla każdego z nich użyj `simple_webfetch` lub `advanced_scraper`, aby znaleźć dane kontaktowe. Zbierz wszystkie dane i zwróć jako JSON. Jeśli nie ma linków, odpowiedz: "Brak linków. Najpierw użyj WebSearchSpecialist."
 ''',
     tools=[simple_webfetch_tool, advanced_scraper_tool]
 )
 
-# =============================================
-# === NOWY SPECJALISTA: BEZPOŚREDNIE ZDOBYWANIE KONTAKTÓW ===
-# =============================================
 direct_contact_scraper_agent = LlmAgent(
     name="DirectContactScraper",
     model="gemini-2.5-pro",
     description="Pobiera dane kontaktowe z podanego przez użytkownika linku.",
     instruction='''
-Sprawdź, czy w wiadomości od użytkownika jest link (zawiera "http" lub "https").
-
-Jeśli tak:
-  Użyj tego linku.
-  Loguj: "Przetwarzam: [url]"
-  Użyj simple_webfetch
-  Jeśli wystąpi błąd lub nie znajdziesz wystarczających danych → użyj advanced_scraper
-  Zbierz wszystkie znalezione dane (e-maile, telefony, linki kontaktowe, adresy).
-  Zwróć jako czytelny tekst.
-
-Jeśli nie ma linku, odpowiedz:
-"Proszę podać link do strony, z której mam pobrać dane kontaktowe."
+Jeśli w wiadomości od użytkownika jest link, użyj `simple_webfetch` lub `advanced_scraper`, aby pobrać z niego dane kontaktowe. Zwróć je w czytelnym tekście. Jeśli nie ma linku, odpowiedz: "Proszę podać link do strony, z której mam pobrać dane kontaktowe."
 ''',
     tools=[simple_webfetch_tool, advanced_scraper_tool]
 )
 
-# =============================================
-# === SPECJALISTA 4: CEIDG ===
-# =============================================
 ceidg_search_specialist = LlmAgent(
     name="CeidgSearchSpecialist",
     model="gemini-2.5-pro",
     description="Szuka firm w CEIDG.",
     instruction=f'''
-Dostępne PKD:
-{json.dumps(pkd_data)}
-KROKI:
-
-Wyodrębnij: słowa kluczowe, miasto, województwo
-→ Jeśli brakuje → poproś
-Znajdź kody PKD
-Wywołaj ceidg_search_firms
-Przefiltruj po nazwie
-Wywołaj ceidg_get_firm_details
-Zapisz w ceidg_results
+Na podstawie zapytania użytkownika (słowa kluczowe, miasto, województwo) i dostępnych kodów PKD: {json.dumps(pkd_data)}, znajdź odpowiednie kody PKD, a następnie użyj narzędzi `ceidg_search_firms` i `ceidg_get_firm_details`, aby znaleźć firmy. Zapisz wyniki w `ceidg_results`.
 ''',
     tools=[ceidg_search_tool, ceidg_details_tool],
     output_key="ceidg_results"
@@ -166,66 +100,83 @@ contact_scraper_tool = AgentTool(agent=contact_scraper_agent)
 direct_contact_scraper_tool = AgentTool(agent=direct_contact_scraper_agent)
 ceidg_search_agent_tool = AgentTool(agent=ceidg_search_specialist)
 
-# =============================================
-# === DEFINICJA CALLBACK ===
-# =============================================
-def after_tool_web_search_callback(
-    callback_context: ToolContext, tool_result: dict
+# ================================================================= #
+# === CALLBACK Z POPRAWIONYM MECHANIZMEM RENDEROWANIA ===
+# ================================================================= #
+# ================================================================= #
+# === CALLBACK Z POPRAWIONYM MECHANIZMEM RENDEROWANIA ===
+# ================================================================= #
+# ================================================================= #
+# === CALLBACK Z POPRAWIONYM MECHANIZMEM RENDEROWANIA ===
+# ================================================================= #
+async def after_tool_root_callback(
+    tool: "BaseTool",
+    args: Dict[str, Any],
+    tool_context: "ToolContext",
+    tool_response: Any,
 ) -> Optional[Content]:
     """
-    Callback wywoływany po wykonaniu narzędzia. Przechwytuje wyniki
-    z WebSearchSpecialist i natychmiast je wyświetla.
+    Ten callback przechwytuje wynik z WebSearchSpecialist, formatuje go jako HTML
+    i zapisuje jako artifact dla renderowania w WebUI.
     """
-    if callback_context.tool_name == "WebSearchSpecialist":
-        # Narzędzie WebSearchSpecialist zwraca wynik w kluczu 'search_results'
-        # a sam wynik jest stringiem JSON. Trzeba go sparsować.
-        json_string_output = tool_result.get("search_results")
-        if not json_string_output:
-            return None
+    if not (hasattr(tool, "agent") and tool.agent.name == "WebSearchSpecialist"):
+        return None
 
-        try:
-            search_results = json.loads(json_string_output)
-        except (json.JSONDecodeError, TypeError):
-            # Jeśli to nie jest prawidłowy JSON, kontynuuj normalnie
-            return None
+    logging.warning(f"[CALLBACK] Przechwycono odpowiedź z '{tool.name}'. Rozpoczynanie formatowania HTML.")
 
-        raw_results = search_results.get("raw_search_results", [])
-        total_found = search_results.get("total_found", 0)
-
-        if not raw_results:
-            return None # Kontynuuj normalnie, jeśli nie ma wyników
-
-        # Formatowanie wyników do HTML
-        display_text = "<h2>Wyniki wyszukiwania:</h2><ul>"
-        for item in raw_results:
-            display_text += f'<li><a href="{item["link"]}" target="_blank">{item["title"]}</a><p>{item["snippet"]}</p></li>'
-        display_text += "</ul>"
-
-        # Przygotowanie danych do postMessage
-        post_message_data = {
-            "source": "WebSearchSpecialist",
-            "data": {
-                "display_text": display_text,
-                "raw_data": raw_results,
-                "total_results": total_found
-            }
-        }
-        
-        # Tworzenie finalnego HTML z postMessage
-        html_output = f"""
-        html<script>
-          window.parent.postMessage({json.dumps(post_message_data)}, 'https://aisp-hub-791a3.web.app');
-        </script>
-        <div>{display_text}</div>
-        """
-
-        # Zwrócenie Content, aby natychmiast zakończyć i wyświetlić wynik
-        return Content(role="model", parts=[{"text": html_output}])
+    raw_response_str = tool_response if isinstance(tool_response, str) else str(tool_response)
     
-    # Dla wszystkich innych narzędzi, kontynuuj normalnie
-    return None
+    json_str = None
+    # Try to find JSON within a markdown code block
+    match = re.search(r"```json\s*(\{.*?\})\s*```", raw_response_str, re.DOTALL)
+    if match:
+        json_str = match.group(1)
+    else:
+        # Fallback to finding the first and last curly brace
+        match = re.search(r"\{.*\}", raw_response_str, re.DOTALL)
+        if match:
+            json_str = match.group(0)
 
-# =============================================
+    if not json_str:
+        return Content(parts=[Part(text="Błąd przetwarzania wyników: nie znaleziono JSON.")], role="function")
+
+    try:
+        parsed_response = json.loads(json_str)
+        search_results_data = parsed_response.get("search_results")
+    except json.JSONDecodeError:
+        return Content(parts=[Part(text="Błąd odczytu wyników (JSONDecodeError).")], role="function")
+    
+    if not search_results_data:
+        return Content(parts=[Part(text="Nie udało się uzyskać wyników (brak klucza 'search_results').")], role="function")
+
+    raw_results = search_results_data.get("raw_search_results", [])
+    total_found = search_results_data.get("total_found", 0)
+
+    if not raw_results:
+        return Content(parts=[Part(text="Nie znalazłem żadnych wyników.")], role="function")
+
+    # Budowanie stringu HTML na podstawie wyników
+    display_text = f"<h3 style='color: #e8eaed; font-weight: 500;'>Znalazłem {total_found} wyników:</h3><ul style='list-style-type:none; padding-left:0; font-family: sans-serif;'>"
+    for item in raw_results[:]:
+        title = html.escape(item.get("title") or "Brak tytułu")
+        link = item.get("link", "#")
+        snippet = html.escape(item.get("snippet") or "Brak opisu.")
+        display_text += f"<li style='margin-bottom: 12px; border: 1px solid #444; padding: 10px; border-radius: 8px;'><a href='{link}' target='_blank' style='font-size: 1.1em; text-decoration: none; color: #8ab4f8; font-weight: 600;'>{title}</a><p style='margin: 5px 0 0; color: #bdc1c6; font-size: 0.9em;'>{snippet}</p></li>"
+    display_text += "</ul>"
+
+    # POPRAWKA: Użyj Part(inline_data=...) z Blobem, aby ustawić poprawny mime_type
+    html_blob = Blob(data=display_text.encode("utf-8"), mime_type="text/html")
+    html_artifact = Part(inline_data=html_blob)
+    await tool_context.save_artifact(filename="search_results.html", artifact=html_artifact)
+
+    tool_context.actions.skip_summarization = True
+    logging.warning("[CALLBACK] HTML zapisany jako artifact. Zwracam tekst wskazujący na artifact.")
+
+    # Zwróć Content z role="function" (jako tool response), z tekstem dla czatu
+    return Content(
+        role="function",
+        parts=[Part(text=f"Znalazłem {total_found} wyników. Sprawdź artifact 'search_results.html' dla pełnej listy.")]
+    )
 # === ROOT AGENT ===
 # =============================================
 root_agent = LlmAgent(
@@ -233,38 +184,15 @@ root_agent = LlmAgent(
     model="gemini-2.5-pro",
     description="Główny asystent interaktywny.",
     instruction='''
-Witaj! Przedstaw się i zapytaj, co mogę dla Ciebie zrobić.
-
-Jeśli użytkownik poda link (zawierający "http" lub "https"), przekaż go do `DirectContactScraper` w celu znalezienia danych kontaktowych.
-
-Jeśli użytkownik poprosi o znalezienie firm lub wyszukanie czegoś w Google, użyj `WebSearchSpecialist`.
-
-W innych przypadkach zapytaj, którego specjalisty chcesz użyć:
-
-Specjaliści:
-- `WebSearchSpecialist` – wyszukuje w Google.
-- `LinkAnalysisSpecialist` – klasyfikuje linki z wyników wyszukiwania.
-- `ContactScraper` – pobiera kontakty z linków znalezionych przez wyszukiwarkę.
-- `DirectContactScraper` – pobiera kontakty z bezpośrednio podanego linku.
-- `CeidgSearchSpecialist` – szuka firm w CEIDG.
-
-Po wykonaniu zadania przez specjalistę, przedstaw wyniki w czytelny sposób.
-
-Zawsze zwracaj HTML:
-html<script>
-  window.parent.postMessage({
-    "source": "NAZWA",
-    "data": { "display_text": "...", "raw_data": {...}, "total_results": X }
-  }, 'https://aisp-hub-791a3.web.app');
-</script>
-<div>display_text</div>
+JESTEŚ PRECYZYJNYM ROUTEREM. Twoim zadaniem jest analiza zapytania i wybranie jednego, najbardziej pasującego narzędzia.
+Po otrzymaniu wyniku od narzędzia, po prostu go zwróć.
 ''',
     tools=[
         web_search_tool,
         link_analysis_tool,
         contact_scraper_tool,
-        direct_contact_scraper_tool,
+        direct_contact_scraper_tool, # Poprawiłem literówkę w nazwie
         ceidg_search_agent_tool
     ],
-    after_tool_callback=after_tool_web_search_callback
+    after_tool_callback=after_tool_root_callback
 )

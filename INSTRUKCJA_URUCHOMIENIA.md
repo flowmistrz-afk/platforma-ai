@@ -51,8 +51,10 @@ Upewnij się, że w Twoim środowisku (np. nowym Cloud Shell) zainstalowane są 
 ## 3. Klonowanie i Instalacja Projektu
 
 1.  **Sklonuj repozytorium:**
+    - Adres repozytorium: `https://github.com/flowmistrz-afk/platforma-ai.git`
+    - Użyj poniższej komendy, aby pobrać projekt na swoje nowe środowisko:
     ```bash
-    git clone <URL_TWOJEGO_REPOZYTORIUM_NA_GITHUB>
+    git clone https://github.com/flowmistrz-afk/platforma-ai.git
     cd platforma-ai
     ```
 
